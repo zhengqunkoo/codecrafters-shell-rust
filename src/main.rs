@@ -38,7 +38,8 @@ fn main() {
                 }
             },
             _ => if let Some(full_path) = find_executable_in_path(command) {
-                let status = std::process::Command::new(full_path)
+                let executable = full_path.file_name().unwrap(); // only the file name
+                let status = std::process::Command::new(executable)
                     .args(args.split_whitespace())
                     .status();
                 match status {
