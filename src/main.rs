@@ -2,7 +2,7 @@
 use std::io::{self, Write};
 
 fn main() {
-    let command_list: Vec<&str> = vec![];
+    let command_list: Vec<&str> = vec!["exit"];
     while true {
         print!("$ ");
         io::stdout().flush().unwrap();
@@ -10,7 +10,9 @@ fn main() {
         let _ = io::stdin().read_line(&mut console_input);
         let command = console_input.trim();
         if command_list.contains(&command) {
-            println!("Command found: {}", command);
+            if command == "exit" {
+                break;
+            }
         } else {
             println!("{}: command not found", command);
         }
