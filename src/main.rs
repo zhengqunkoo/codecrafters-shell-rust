@@ -3,10 +3,20 @@ use std::env;
 use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;
 
-fn main() {
-    // Or handle it more gracefully
+fn find_executable_in_path(executable: &str) -> Option<std::path::PathBuf> {
     let path_env = env::var("PATH").unwrap_or_else(|_| String::new());
+    for path_dir in path_env.split(':') {
+        let full_path = std::path::Path::new(path_dir).join(executable);
+        if let Ok(metadata) = std::fs::metadata(&full_path) {
+            if metadata.permissions().mode() & 0o111 != 0 { // if any execute bit is set
+                return Some(full_path);
+            }
+        }
+    }
+    None
+}
 
+fn main() {
     let command_list: Vec<&str> = vec!["exit", "echo", "type"];
     while true {
         print!("$ ");
@@ -23,21 +33,9 @@ fn main() {
                     "type" => if command_list.contains(&args) {
                         println!("{} is a shell builtin", args);
                     } else {
-                        let path_dirs = path_env.split(':');
-                        let mut found = false;
-                        for path_dir in path_dirs {
-                            let full_path = std::path::Path::new(path_dir).join(args);
-                            if full_path.exists() {
-                                if let Ok(metadata) = full_path.metadata() {
-                                    if metadata.permissions().mode() & 0o111 != 0 { // if any execute bit is set
-                                        println!("{} is {}", args, full_path.display());
-                                        found = true;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        if !found {
+                        if let Some(full_path) = find_executable_in_path(args) {
+                            println!("{} is {}", args, full_path.display());
+                        } else {
                             println!("{}: not found", args);
                         }
                     },
