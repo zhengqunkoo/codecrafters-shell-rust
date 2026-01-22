@@ -16,6 +16,26 @@ fn find_executable_in_path(executable: &str) -> Option<std::path::PathBuf> {
     None
 }
 
+fn parse_args(args: &str) -> Vec<String> {
+    // Split args by whitespace, but treat quoted strings as single arguments.
+    // An unfinished quote is a single argument too.
+    args.split('\'').enumerate().flat_map(|(i, part)| {
+        // An example input/output is: hello "world program" test -> ["hello", "\"world program\"", "test"].
+        // This makes sense from the code because the even indexed parts are split by whitespace, e.g. "hello " and " test",
+        // while the odd indexed parts are turned back into quoted strings via format!("\"{}\"", part). The result is flattened into a single vector.
+        if i % 2 == 0 {
+            part.split_whitespace().map(|s| s.to_string()).collect::<Vec<String>>()
+        } else {
+            // Empty quotes '' are ignored.
+            if part.is_empty() {
+                vec![]
+            } else {
+                vec![part.to_string()]
+            }
+        }
+    }).collect()
+}
+
 fn main() {
     let command_list: Vec<&str> = vec!["exit", "echo", "type"];
     while true {
@@ -27,7 +47,15 @@ fn main() {
         let (command, args) = console_input.split_once(' ').unwrap_or((&console_input, ""));
         match command {
             "exit" => break,
-            "echo" => println!("{}", args),
+            "echo" => {
+                // Command	Expected output	Explanation
+                // echo 'hello    world'	hello    world	Spaces are preserved within quotes.
+                // echo hello    world	hello world	Consecutive spaces are collapsed unless quoted.
+                // echo 'hello''world'	helloworld	Adjacent quoted strings 'hello' and 'world' are concatenated.
+                // echo hello''world	helloworld	Empty quotes '' are ignored.
+                let parsed_args = parse_args(args);
+                println!("{}", parsed_args.join(" "));
+            },
             "type" => if command_list.contains(&args) {
                 println!("{} is a shell builtin", args);
             } else {
@@ -39,28 +67,7 @@ fn main() {
             },
             _ => if let Some(full_path) = find_executable_in_path(command) {
                 let executable = full_path.file_name().unwrap(); // only the file name
-                // Split args by whitespace, but treat quoted strings as single arguments.
-                // An unfinished quote is a single argument too.
-                let args = args.split('"').enumerate().flat_map(|(i, part)| {
-                    if i % 2 == 0 {
-                        part.split_whitespace().map(|s| s.to_string()).collect::<Vec<String>>()
-                    } else {
-                        /* I thought that I had to provide the quotes with the quoted string to Python.
-                        std::process::Command expects raw arguments (without shell quotes).
-
-                        When you run python3 -c "import sys; ...":
-                        Standard Shell: The shell parses the quotes to treat everything inside as one argument, but strips the quotes before passing the string import sys; ... to Python.
-                        Your Shell (Previously):
-                        - You are parsing the quotes to group the argument, but then adding them back with format!("\"{}\"", part).
-                        - Python receives: "import sys; print(sys.executable)" (as a string literal including quotes).
-                        - Python executes this "code". Since it's just a string literal statement, it evaluates it and does nothing (no output).
-                         */
-                        vec![part.to_string()]
-                    }
-                });
-                // An example input/output is: hello "world program" test -> ["hello", "\"world program\"", "test"].
-                // This makes sense from the above code because the even indexed parts are split by whitespace, e.g. "hello " and " test",
-                // while the odd indexed parts are turned back into quoted strings via format!("\"{}\"", part). The result is flattened into a single vector.
+                let args = parse_args(args);
                 let status = std::process::Command::new(executable)
                     .args(args)
                     .status();
