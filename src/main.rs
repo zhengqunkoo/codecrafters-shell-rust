@@ -46,9 +46,9 @@ fn main() {
         console_input = console_input.trim().to_string();
         let (command, rest) = console_input.split_once(' ').unwrap_or((&console_input, ""));
         let (args, filename) = if let Some((a, f)) = rest.split_once("1>") {
-            (parse_args(a), f.trim())
+            (parse_args(a), f.trim().trim_matches('"').trim_matches('\'')) // The error "cannot open file for output redirection" occurred because the filename included the quotes (e.g., "/tmp/pig/blueberry" instead of /tmp/pig/blueberry),
         } else if let Some((a, f)) = rest.split_once('>') {
-            (parse_args(a), f.trim())
+            (parse_args(a), f.trim().trim_matches('"').trim_matches('\''))
         } else {
             (parse_args(rest), "")
         };
