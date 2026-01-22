@@ -105,7 +105,7 @@ fn main() {
                     if let Ok(file) = std::fs::File::create(filename) {
                         cmd.stdout(file);
                     }
-                }
+                } // else cmd prints to stdout
 
                 let status = cmd.status();
                 match status {
@@ -116,6 +116,7 @@ fn main() {
                     }
                     Err(e) => println!("{}: failed to execute: {}", command, e),
                 }
+                continue; // This is necessary to prevent my shell from overwriting the external command's work with an empty string in the postprocessing step below.
             } else {
                 println!("{}: command not found", command);
             }
