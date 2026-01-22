@@ -72,7 +72,7 @@ fn main() {
                 } else if let Some(full_path) = find_executable_in_path(&arg) {
                     string_for_stdout.push_str(&format!("{} is {}\n", arg, full_path.display()));
                 } else {
-                    string_for_stdout.push_str(&format!("kooshell: type: {}: not found\n", arg));
+                    string_for_stdout.push_str(&format!("{}: not found\n", arg));
                 }
             },
             "pwd" => {
