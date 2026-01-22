@@ -72,8 +72,12 @@ fn main() {
                 }
             },
             "cd" => {
-                let target_dir = args.to_string();
-                if let Err(_) = env::set_current_dir(&target_dir) {
+                let target_dir = if args == "~" {
+                    env::var("HOME").unwrap_or_else(|_| String::new())
+                } else {
+                    args.to_string()
+                };
+                if let Err(_) = env::set_current_dir(&target_dir) { // this also handles relative paths
                     println!("cd: {}: No such file or directory", target_dir);
                 }
             },
