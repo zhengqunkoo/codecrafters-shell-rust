@@ -77,7 +77,7 @@ fn main() {
             },
             "pwd" => {
                 match env::current_dir() {
-                    Ok(path) => string_for_stdout = path.display().to_string(),
+                    Ok(path) => string_for_stdout = path.display().to_string() + "\n",
                     Err(e) => println!("pwd: error retrieving current directory: {}", e),
                 }
             },
