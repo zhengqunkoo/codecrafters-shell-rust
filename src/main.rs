@@ -37,7 +37,7 @@ fn parse_args(args: &str) -> Vec<String> {
 }
 
 fn main() {
-    let command_list: Vec<&str> = vec!["exit", "echo", "type"];
+    let command_list: Vec<&str> = vec!["exit", "echo", "type", "pwd"];
     while true {
         print!("$ ");
         io::stdout().flush().unwrap();
@@ -63,6 +63,12 @@ fn main() {
                     println!("{} is {}", args, full_path.display());
                 } else {
                     println!("{}: not found", args);
+                }
+            },
+            "pwd" => {
+                match env::current_dir() {
+                    Ok(path) => println!("{}", path.display()),
+                    Err(e) => println!("pwd: error retrieving current directory: {}", e),
                 }
             },
             _ => if let Some(full_path) = find_executable_in_path(command) {
