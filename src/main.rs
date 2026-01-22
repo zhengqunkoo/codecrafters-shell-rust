@@ -37,7 +37,7 @@ fn parse_args(args: &str) -> Vec<String> {
 }
 
 fn main() {
-    let command_list: Vec<&str> = vec!["exit", "echo", "type", "pwd"];
+    let command_list: Vec<&str> = vec!["exit", "echo", "type", "pwd", "cd"];
     while true {
         print!("$ ");
         io::stdout().flush().unwrap();
@@ -69,6 +69,12 @@ fn main() {
                 match env::current_dir() {
                     Ok(path) => println!("{}", path.display()),
                     Err(e) => println!("pwd: error retrieving current directory: {}", e),
+                }
+            },
+            "cd" => {
+                let target_dir = args.to_string();
+                if let Err(_) = env::set_current_dir(&target_dir) {
+                    println!("cd: {}: No such file or directory", target_dir);
                 }
             },
             _ => if let Some(full_path) = find_executable_in_path(command) {
