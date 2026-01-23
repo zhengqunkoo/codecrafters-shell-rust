@@ -34,19 +34,26 @@ pub fn find_executable_in_path(executable: &str, path_env_opt: Option<&str>) -> 
     None
 }
 
-pub fn parse_command(input: &str) -> (String, Vec<String>, Option<String>) {
+class RedirectTo {
+    enum STDOUT,
+    enum STDERR,
+}
+
+pub fn parse_command(input: &str) -> (String, Vec<String>, Option<String>, Option<RedirectTo>) {
     let input = input.trim();
-    let (command, rest) = input.split_once(' ').unwrap_or((input, ""));
+    let (command, rest, redirect_to) = input.split_once(' ').unwrap_or((input, ""));
 
     let (args, filename) = if let Some((a, f)) = rest.split_once("1>") {
-        (parse_args(a), Some(f.trim().trim_matches('"').trim_matches('\'').to_string()))
+        (parse_args(a), Some(f.trim().trim_matches('"').trim_matches('\'').to_string()), RedirectTo::STDOUT)
+    } else if let Some((a, f)) = rest.split_once('2>') {
+        (parse_args(a), Some(f.trim().trim_matches('"').trim_matches('\'').to_string()), RedirectTo::STDERR)
     } else if let Some((a, f)) = rest.split_once('>') {
-        (parse_args(a), Some(f.trim().trim_matches('"').trim_matches('\'').to_string()))
+        (parse_args(a), Some(f.trim().trim_matches('"').trim_matches('\'').to_string()), RedirectTo::STDOUT)
     } else {
-        (parse_args(rest), None)
+        (parse_args(rest), None, None)
     };
 
-    (command.to_string(), args, filename)
+    (command.to_string(), args, filename, redirect_to)
 }
 
 pub fn parse_args(args: &str) -> Vec<String> {
@@ -76,7 +83,7 @@ fn main() {
         io::stdout().flush().unwrap();
         let mut console_input = String::new();
         let _ = io::stdin().read_line(&mut console_input);
-        let (command, args, filename_opt) = parse_command(&console_input);
+        let (command, args, filename_opt, stdout_or_stderr) = parse_command(&console_input);
         let filename = filename_opt.as_deref().unwrap_or("");
 
         // `string_for_stdout`` will either be printed to the console, or written to `filename`.
@@ -129,7 +136,11 @@ fn main() {
 
                 if !filename.is_empty() {
                     if let Ok(file) = std::fs::File::create(filename) {
-                        cmd.stdout(file);
+                        if stdout_or_stderr == STDOUT {
+                            cmd.stdout(file);
+                        } else if stdout_or_stderr == STDERR {
+                            cmd.stderr(file);
+                        }
                     }
                 } // else cmd prints to stdout
 
