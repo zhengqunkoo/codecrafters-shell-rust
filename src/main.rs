@@ -1,22 +1,55 @@
 #[allow(unused_imports)]
 use std::env;
+
+#[cfg(test)]
+mod tests;
+
 use std::io::{self, Write};
+#[cfg(target_family = "unix")]
 use std::os::unix::fs::PermissionsExt;
 
-fn find_executable_in_path(executable: &str) -> Option<std::path::PathBuf> {
-    let path_env = env::var("PATH").unwrap_or_else(|_| String::new());
-    for path_dir in path_env.split(':') {
+pub fn find_executable_in_path(executable: &str, path_env_opt: Option<&str>) -> Option<std::path::PathBuf> {
+    let default_path;
+    let path_to_use = match path_env_opt {
+        Some(p) => p,
+        None => {
+            default_path = env::var("PATH").unwrap_or_default();
+            &default_path
+        }
+    };
+
+    let splitter = if cfg!(windows) { ';' } else { ':' };
+    for path_dir in path_to_use.split(splitter) {
         let full_path = std::path::Path::new(path_dir).join(executable);
-        if let Ok(metadata) = std::fs::metadata(&full_path) {
-            if metadata.permissions().mode() & 0o111 != 0 { // if any execute bit is set
+        if let Ok(_metadata) = std::fs::metadata(&full_path) {
+            #[cfg(target_family = "unix")]
+            if _metadata.permissions().mode() & 0o111 != 0 { // if any execute bit is set
                 return Some(full_path);
             }
+            #[cfg(target_family = "windows")]
+            // On Windows, existence is a basic check. Real shells check PATHEXT, etc.
+            return Some(full_path);
         }
     }
     None
 }
 
-fn parse_args(args: &str) -> Vec<String> {
+pub fn parse_command(input: &str) -> (String, Vec<String>, Option<String>) {
+    let input = input.trim();
+    let (command, rest) = input.split_once(' ').unwrap_or((input, ""));
+
+    let (args, filename) = if let Some((a, f)) = rest.split_once("1>") {
+        (parse_args(a), Some(f.trim().trim_matches('"').trim_matches('\'').to_string()))
+    } else if let Some((a, f)) = rest.split_once('>') {
+        (parse_args(a), Some(f.trim().trim_matches('"').trim_matches('\'').to_string()))
+    } else {
+        (parse_args(rest), None)
+    };
+
+    (command.to_string(), args, filename)
+}
+
+pub fn parse_args(args: &str) -> Vec<String> {
     // Split args by whitespace, but treat quoted strings as single arguments.
     // An unfinished quote is a single argument too.
     args.split('\'').enumerate().flat_map(|(i, part)| {
@@ -38,25 +71,18 @@ fn parse_args(args: &str) -> Vec<String> {
 
 fn main() {
     let command_list: Vec<String> = vec!["exit", "echo", "type", "pwd", "cd"].into_iter().map(String::from).collect();
-    while true {
+    loop {
         print!("$ ");
         io::stdout().flush().unwrap();
         let mut console_input = String::new();
         let _ = io::stdin().read_line(&mut console_input);
-        console_input = console_input.trim().to_string();
-        let (command, rest) = console_input.split_once(' ').unwrap_or((&console_input, ""));
-        let (args, filename) = if let Some((a, f)) = rest.split_once("1>") {
-            (parse_args(a), f.trim().trim_matches('"').trim_matches('\'')) // The error "cannot open file for output redirection" occurred because the filename included the quotes (e.g., "/tmp/pig/blueberry" instead of /tmp/pig/blueberry),
-        } else if let Some((a, f)) = rest.split_once('>') {
-            (parse_args(a), f.trim().trim_matches('"').trim_matches('\''))
-        } else {
-            (parse_args(rest), "")
-        };
+        let (command, args, filename_opt) = parse_command(&console_input);
+        let filename = filename_opt.as_deref().unwrap_or("");
 
         // `string_for_stdout`` will either be printed to the console, or written to `filename`.
         // Errors are printed to the console directly.
         let mut string_for_stdout = String::new();
-        match command {
+        match command.as_str() {
             "exit" => break,
             "echo" => {
                 // Command	Expected output	Explanation
@@ -69,7 +95,7 @@ fn main() {
             "type" => for arg in args {
                 if command_list.contains(&arg) {
                     string_for_stdout.push_str(&format!("{} is a shell builtin\n", arg));
-                } else if let Some(full_path) = find_executable_in_path(&arg) {
+                } else if let Some(full_path) = find_executable_in_path(&arg, None) {
                     string_for_stdout.push_str(&format!("{} is {}\n", arg, full_path.display()));
                 } else {
                     string_for_stdout.push_str(&format!("{}: not found\n", arg));
@@ -96,7 +122,7 @@ fn main() {
                 }
             },
             "" => continue, // empty input, just reprompt
-            _ => if let Some(full_path) = find_executable_in_path(command) {
+            _ => if let Some(full_path) = find_executable_in_path(&command, None) {
                 let executable = full_path.file_name().unwrap(); // only the file name
                 let mut cmd = std::process::Command::new(executable);
                 cmd.args(args);
