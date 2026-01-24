@@ -24,10 +24,9 @@ mod tests {
 
     #[test]
     fn test_parse_args_adjacent_quotes() {
-        // Based on analysis: 'hello''world' -> ["hello", "world"]
-        // If the implementation changes to concatenate, this test should be updated.
+        // Updated: 'hello''world' -> ["helloworld"] (concatenated)
         let args = parse_args("'hello''world'");
-        assert_eq!(args, vec!["hello", "world"]);
+        assert_eq!(args, vec!["helloworld"]);
     }
 
     #[test]
@@ -318,5 +317,11 @@ mod tests {
          
          let fox_content = std::fs::read_to_string(&fox_md).expect("echo output file should exist");
          assert_eq!(fox_content.trim(), "Hello Maria");
+    }
+
+    #[test]
+    fn test_parse_args_double_quotes() {
+        let args = parse_args("echo \"hello world\"");
+        assert_eq!(args, vec!["echo", "hello world"]);
     }
 }
