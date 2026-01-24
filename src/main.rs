@@ -38,13 +38,21 @@ pub fn find_executable_in_path(executable: &str, path_env_opt: Option<&str>) -> 
 pub enum RedirectTo {
     Stdout,
     Stderr,
+    StdoutAppend,
+    StderrAppend,
 }
 
 pub fn parse_command(input: &str) -> (String, Vec<String>, Option<String>, Option<RedirectTo>) {
     let input = input.trim();
     let (command, rest) = input.split_once(' ').unwrap_or((input, ""));
 
-    let (args, filename, redirect_to) = if let Some((a, f)) = rest.split_once("1>") {
+    let (args, filename, redirect_to) = if let Some((a, f)) = rest.split_once("1>>") {
+        (parse_args(a), Some(f.trim().trim_matches('"').trim_matches('\'').to_string()), Some(RedirectTo::StdoutAppend))
+    } else if let Some((a, f)) = rest.split_once("2>>") {
+        (parse_args(a), Some(f.trim().trim_matches('"').trim_matches('\'').to_string()), Some(RedirectTo::StderrAppend))
+    } else if let Some((a, f)) = rest.split_once(">>") {
+        (parse_args(a), Some(f.trim().trim_matches('"').trim_matches('\'').to_string()), Some(RedirectTo::StdoutAppend))
+    } else if let Some((a, f)) = rest.split_once("1>") {
         (parse_args(a), Some(f.trim().trim_matches('"').trim_matches('\'').to_string()), Some(RedirectTo::Stdout))
     } else if let Some((a, f)) = rest.split_once("2>") {
         (parse_args(a), Some(f.trim().trim_matches('"').trim_matches('\'').to_string()), Some(RedirectTo::Stderr))
@@ -77,8 +85,142 @@ pub fn parse_args(args: &str) -> Vec<String> {
     }).collect()
 }
 
-fn main() {
+pub fn execute_command(command: &str, args: Vec<String>, filename: &str, redirect_to: Option<RedirectTo>) -> bool {
     let command_list: Vec<String> = vec!["exit", "echo", "type", "pwd", "cd"].into_iter().map(String::from).collect();
+    let mut string_for_stdout = String::new();
+    let mut string_for_stderr = String::new();
+
+    match command {
+        "exit" => return false,
+        "echo" => {
+            string_for_stdout = args.join(" ") + "\n";
+        },
+        "type" => for arg in args {
+            if command_list.contains(&arg) {
+                string_for_stdout.push_str(&format!("{} is a shell builtin\n", arg));
+            } else if let Some(full_path) = find_executable_in_path(&arg, None) {
+                string_for_stdout.push_str(&format!("{} is {}\n", arg, full_path.display()));
+            } else {
+                string_for_stdout.push_str(&format!("{}: not found\n", arg));
+            }
+        },
+        "pwd" => {
+            match env::current_dir() {
+                Ok(path) => string_for_stdout = path.display().to_string() + "\n",
+                Err(e) => string_for_stderr = format!("pwd: error retrieving current directory: {}\n", e),
+            }
+        },
+        "cd" => {
+            if args.len() > 1 {
+                string_for_stderr = "cd: too many arguments\n".to_string();
+            } else {
+                let target_dir = if args.len() == 0 || args[0] == "~" {
+                        env::var("HOME").unwrap_or_else(|_| String::new())
+                    } else {
+                        args[0].to_string()
+                    };
+                if let Err(_) = env::set_current_dir(&target_dir) {
+                    string_for_stderr = format!("cd: {}: No such file or directory\n", target_dir);
+                }
+            }
+        },
+        "" => return true,
+        _ => if let Some(full_path) = find_executable_in_path(&command, None) {
+            let executable = full_path.file_name().unwrap();
+            let mut cmd = std::process::Command::new(executable);
+            cmd.args(args);
+
+            if !filename.is_empty() {
+                let mut fs_open_options = std::fs::OpenOptions::new();
+                fs_open_options.create(true).write(true);
+                match redirect_to {
+                    Some(RedirectTo::Stdout) => { fs_open_options.truncate(true); }
+                    Some(RedirectTo::Stderr) => { fs_open_options.truncate(true); }
+                    Some(RedirectTo::StdoutAppend) => { fs_open_options.append(true); }
+                    Some(RedirectTo::StderrAppend) => { fs_open_options.append(true); }
+                    None => {}
+                }
+
+                match fs_open_options.open(filename) {
+                    Ok(file) => {
+                        match redirect_to {
+                            Some(RedirectTo::Stdout) | Some(RedirectTo::StdoutAppend) => {
+                                cmd.stdout(file);
+                            }
+                            Some(RedirectTo::Stderr) | Some(RedirectTo::StderrAppend) => {
+                                cmd.stderr(file);
+                            }
+                            None => {}
+                        }
+                    }
+                    Err(_) => {
+                        println!("{}: cannot open file for output redirection", filename);
+                        return true;
+                    }
+                }
+            }
+
+            let status = cmd.status();
+            match status {
+                Ok(status) => {
+                    if !status.success() {
+                        //println!("{}: exited with status {}", command, status);
+                    }
+                }
+                Err(e) => println!("{}: failed to execute: {}", command, e),
+            }
+            return true;
+        } else {
+            string_for_stderr = format!("{}: command not found\n", command);
+        }
+    }
+
+    if filename.is_empty() {
+        print!("{}", string_for_stdout);
+        eprint!("{}", string_for_stderr);
+    } else {
+        let mut file_options = std::fs::OpenOptions::new();
+        file_options.create(true).write(true);
+        match redirect_to {
+            Some(RedirectTo::Stdout) => { file_options.truncate(true); }
+            Some(RedirectTo::Stderr) => { file_options.truncate(true); }
+            Some(RedirectTo::StdoutAppend) => { file_options.append(true); }
+            Some(RedirectTo::StderrAppend) => { file_options.append(true); }
+            None => {}
+        }
+
+        match redirect_to {
+            Some(RedirectTo::Stdout) | Some(RedirectTo::StdoutAppend) => {
+                eprint!("{}", string_for_stderr);
+                match file_options.open(filename) {
+                    Ok(mut file) => {
+                         write!(file, "{}", string_for_stdout).unwrap();
+                    }
+                    Err(_) => {
+                        println!("{}: cannot open file for output redirection", filename);
+                    }
+                }
+            }
+            Some(RedirectTo::Stderr) | Some(RedirectTo::StderrAppend) => {
+                print!("{}", string_for_stdout);
+                match file_options.open(filename) {
+                    Ok(mut file) => {
+                         write!(file, "{}", string_for_stderr).unwrap();
+                    }
+                    Err(_) => {
+                        println!("{}: cannot open file for output redirection", filename);
+                    }
+                }
+            }
+            _ => {
+                println!("{}: invalid redirection", filename);
+            }
+        }
+    }
+    true
+}
+
+fn main() {
     loop {
         print!("$ ");
         io::stdout().flush().unwrap();
@@ -87,131 +229,8 @@ fn main() {
         let (command, args, filename_opt, redirect_to) = parse_command(&console_input);
         let filename = filename_opt.as_deref().unwrap_or("");
 
-        // `string_for_stdout`` will either be printed to the console, or written to `filename`.
-        // Errors are printed to the console directly.
-        // These variables are only for builtin commands.
-        let mut string_for_stdout = String::new();
-        let mut string_for_stderr = String::new();
-        match command.as_str() {
-            "exit" => break,
-            "echo" => {
-                // Command	Expected output	Explanation
-                // echo 'hello    world'	hello    world	Spaces are preserved within quotes.
-                // echo hello    world	hello world	Consecutive spaces are collapsed unless quoted.
-                // echo 'hello''world'	helloworld	Adjacent quoted strings 'hello' and 'world' are concatenated.
-                // echo hello''world	helloworld	Empty quotes '' are ignored.
-                string_for_stdout = args.join(" ") + "\n";
-            },
-            "type" => for arg in args {
-                if command_list.contains(&arg) {
-                    string_for_stdout.push_str(&format!("{} is a shell builtin\n", arg));
-                } else if let Some(full_path) = find_executable_in_path(&arg, None) {
-                    string_for_stdout.push_str(&format!("{} is {}\n", arg, full_path.display()));
-                } else {
-                    string_for_stdout.push_str(&format!("{}: not found\n", arg));
-                }
-            },
-            "pwd" => {
-                match env::current_dir() {
-                    Ok(path) => string_for_stdout = path.display().to_string() + "\n",
-                    Err(e) => string_for_stderr = format!("pwd: error retrieving current directory: {}\n", e),
-                }
-            },
-            "cd" => {
-                if args.len() > 1 {
-                    string_for_stderr = "cd: too many arguments\n".to_string();
-                } else {
-                    let target_dir = if args.len() == 0 || args[0] == "~" {
-                            env::var("HOME").unwrap_or_else(|_| String::new())
-                        } else {
-                            args[0].to_string()
-                        };
-                    if let Err(_) = env::set_current_dir(&target_dir) { // this also handles relative paths
-                        string_for_stderr = format!("cd: {}: No such file or directory\n", target_dir);
-                    }
-                }
-            },
-            "" => continue, // empty input, just reprompt
-            _ => if let Some(full_path) = find_executable_in_path(&command, None) {
-                let executable = full_path.file_name().unwrap(); // only the file name
-                let mut cmd = std::process::Command::new(executable);
-                cmd.args(args);
-
-                if !filename.is_empty() {
-                    match std::fs::File::create(filename) {
-                        Ok(file) => {
-                            if redirect_to == Some(RedirectTo::Stdout) {
-                                cmd.stdout(file);
-                            } else if redirect_to == Some(RedirectTo::Stderr) {
-                                cmd.stderr(file);
-                            }
-                        }
-                        Err(_) => {
-                            println!("{}: cannot open file for output redirection", filename);
-                            continue;
-                        }
-                    }
-                }
-
-                let status = cmd.status();
-                match status {
-                    Ok(status) => {
-                        if !status.success() {
-                            //println!("{}: exited with status {}", command, status);
-                        }
-                    }
-                    Err(e) => println!("{}: failed to execute: {}", command, e),
-                }
-                continue; // This is necessary to prevent my shell from overwriting the external command's work with an empty string in the postprocessing step below.
-            } else {
-                string_for_stderr = format!("{}: command not found\n", command);
-            }
-        }
-
-        // Handle file redirects for builtin commands
-        if filename.is_empty() {
-            // No output redirection, print to console
-            print!("{}", string_for_stdout);
-            eprint!("{}", string_for_stderr);
-        } else {
-            if redirect_to == Some(RedirectTo::Stdout) {
-                // Redirect output to file
-                eprint!("{}", string_for_stderr);
-                let stdout_file = std::fs::OpenOptions::new()
-                    .create(true)
-                    .write(true)
-                    .truncate(true)
-                    .open(filename);
-                
-                match stdout_file {
-                    Ok(mut file) => {
-                        write!(file, "{}", string_for_stdout).unwrap();
-                    },
-                    Err(_) => {
-                        println!("{}: cannot open file for output redirection", filename);
-                    }
-                }
-            } else if redirect_to == Some(RedirectTo::Stderr) {
-                // Redirect stderr to file
-                print!("{}", string_for_stdout);
-                let stderr_file = std::fs::OpenOptions::new()
-                    .create(true)
-                    .write(true)
-                    .truncate(true)
-                    .open(filename);
-                
-                match stderr_file {
-                    Ok(mut file) => {
-                        write!(file, "{}", string_for_stderr).unwrap();
-                    },
-                    Err(_) => {
-                        println!("{}: cannot open file for output redirection", filename);
-                    }
-                }
-            } else {
-                // This case should not happen, but handle gracefully.
-                println!("{}: invalid redirection", filename);
-            }
+        if !execute_command(&command, args, filename, redirect_to) {
+            break;
         }
     }
 }

@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::{find_executable_in_path, parse_args, parse_command, RedirectTo};
+    use crate::{find_executable_in_path, parse_args, parse_command, execute_command, RedirectTo};
     use std::fs::File;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -162,5 +162,161 @@ mod tests {
         assert_eq!(args, vec!["foo", "bar"]);
         assert_eq!(filename, Some("error.log".to_string()));
         assert_eq!(redirect, Some(RedirectTo::Stderr));
+    }
+
+    #[test]
+    fn test_parse_command_redirect_append() {
+        let (cmd, args, filename, redirect) = parse_command("ls >> out");
+        assert_eq!(cmd, "ls");
+        assert!(args.is_empty());
+        assert_eq!(filename, Some("out".to_string()));
+        assert_eq!(redirect, Some(RedirectTo::StdoutAppend));
+    }
+
+    #[test]
+    fn test_parse_command_redirect_stdout_append_explicit() {
+        let (cmd, args, filename, redirect) = parse_command("ls 1>> out");
+        assert_eq!(cmd, "ls");
+        assert!(args.is_empty());
+        assert_eq!(filename, Some("out".to_string()));
+        assert_eq!(redirect, Some(RedirectTo::StdoutAppend));
+    }
+
+    #[test]
+    fn test_parse_command_redirect_stderr_append() {
+        let (cmd, args, filename, redirect) = parse_command("ls 2>> out");
+        assert_eq!(cmd, "ls");
+        assert!(args.is_empty());
+        assert_eq!(filename, Some("out".to_string()));
+        assert_eq!(redirect, Some(RedirectTo::StderrAppend));
+    }
+
+    #[test]
+    fn test_execute_builtin_echo_redirect_stdout() {
+        let dir = std::env::temp_dir().join("shell_tests_stdout");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file_path = dir.join("out.txt");
+        let file_path_str = file_path.to_str().unwrap();
+
+        if file_path.exists() {
+            std::fs::remove_file(&file_path).unwrap();
+        }
+
+        execute_command("echo", vec!["hello".to_string()], file_path_str, Some(RedirectTo::Stdout));
+
+        let content = std::fs::read_to_string(&file_path).unwrap();
+        assert_eq!(content, "hello\n");
+    }
+
+    #[test]
+    fn test_execute_builtin_echo_redirect_append() {
+        let dir = std::env::temp_dir().join("shell_tests_append");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file_path = dir.join("out.txt");
+        let file_path_str = file_path.to_str().unwrap();
+
+        if file_path.exists() {
+             std::fs::remove_file(&file_path).unwrap();
+        }
+        
+        execute_command("echo", vec!["hello".to_string()], file_path_str, Some(RedirectTo::Stdout));
+        execute_command("echo", vec!["world".to_string()], file_path_str, Some(RedirectTo::StdoutAppend));
+
+        let content = std::fs::read_to_string(&file_path).unwrap();
+        assert_eq!(content, "hello\nworld\n");
+    }
+
+    #[test]
+    fn test_execute_external_redirect_stdout() {
+         let dir = std::env::temp_dir().join("shell_tests_ext_stdout");
+         std::fs::create_dir_all(&dir).unwrap();
+         let file_path = dir.join("out.txt");
+         let file_path_str = file_path.to_str().unwrap();
+         
+         if file_path.exists() {
+            std::fs::remove_file(&file_path).unwrap();
+         }
+         
+         // Using 'sh' assumes the environment has it. Most linux envs do.
+         execute_command("sh", vec!["-c".to_string(), "echo external".to_string()], file_path_str, Some(RedirectTo::Stdout));
+         
+         let content = std::fs::read_to_string(&file_path).expect("File should exist");
+         assert!(content.contains("external"));
+    }
+
+    #[test]
+    fn test_execute_external_redirect_stderr() {
+         let dir = std::env::temp_dir().join("shell_tests_ext_stderr");
+         std::fs::create_dir_all(&dir).unwrap();
+         let file_path = dir.join("err.txt");
+         let file_path_str = file_path.to_str().unwrap();
+         
+         if file_path.exists() {
+            std::fs::remove_file(&file_path).unwrap();
+         }
+         
+         execute_command("sh", vec!["-c".to_string(), "echo failure >&2".to_string()], file_path_str, Some(RedirectTo::Stderr));
+         
+         let content = std::fs::read_to_string(&file_path).expect("File should exist");
+         assert!(content.contains("failure"));
+    }
+
+    #[test]
+    fn test_execute_external_redirect_append() {
+         let dir = std::env::temp_dir().join("shell_tests_ext_append");
+         std::fs::create_dir_all(&dir).unwrap();
+         let file_path = dir.join("out.txt");
+         let file_path_str = file_path.to_str().unwrap();
+         
+         if file_path.exists() {
+            std::fs::remove_file(&file_path).unwrap();
+         }
+         
+         execute_command("sh", vec!["-c".to_string(), "echo line1".to_string()], file_path_str, Some(RedirectTo::Stdout));
+         execute_command("sh", vec!["-c".to_string(), "echo line2".to_string()], file_path_str, Some(RedirectTo::StdoutAppend));
+         
+         let content = std::fs::read_to_string(&file_path).unwrap();
+         assert!(content.contains("line1"));
+         assert!(content.contains("line2"));
+    }
+
+    #[test]
+    fn test_owl_scenario() {
+         // emulate /tmp/rat
+         let rat_dir = std::env::temp_dir().join("rat_test");
+         std::fs::create_dir_all(&rat_dir).unwrap();
+         std::fs::write(rat_dir.join("banana"), "banana\n").unwrap();
+         std::fs::write(rat_dir.join("grape"), "grape\n").unwrap();
+         std::fs::write(rat_dir.join("pear"), "pear\n").unwrap();
+         
+         // emulate /tmp/owl/bee.md
+         let owl_dir = std::env::temp_dir().join("owl_test");
+         std::fs::create_dir_all(&owl_dir).unwrap();
+         let bee_md = owl_dir.join("bee.md");
+         if bee_md.exists() { std::fs::remove_file(&bee_md).unwrap(); }
+         
+         // ls -1 /tmp/rat >> /tmp/owl/bee.md
+         // We use 'ls' assuming it's available.
+         let rat_dir_str = rat_dir.to_str().unwrap();
+         let bee_md_str = bee_md.to_str().unwrap();
+         
+         execute_command("ls", vec!["-1".to_string(), rat_dir_str.to_string()], bee_md_str, Some(RedirectTo::StdoutAppend));
+         
+         let content = std::fs::read_to_string(&bee_md).expect("ls output file should exist");
+         // The order of ls output is not guaranteed to be alphabetical across all systems/locales but usually is.
+         // We just check if files are present.
+         assert!(content.contains("banana"));
+         assert!(content.contains("grape"));
+         assert!(content.contains("pear"));
+         
+         // echo 'Hello Maria' 1>> /tmp/owl/fox.md
+         let fox_md = owl_dir.join("fox.md");
+         let fox_md_str = fox_md.to_str().unwrap();
+         if fox_md.exists() { std::fs::remove_file(&fox_md).unwrap(); }
+
+         execute_command("echo", vec!["Hello Maria".to_string()], fox_md_str, Some(RedirectTo::StdoutAppend));
+         
+         let fox_content = std::fs::read_to_string(&fox_md).expect("echo output file should exist");
+         assert_eq!(fox_content.trim(), "Hello Maria");
     }
 }
