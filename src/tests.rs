@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::{find_executable_in_path, parse_args, parse_command};
+    use crate::{find_executable_in_path, parse_args, parse_command, RedirectTo};
     use std::fs::File;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -103,41 +103,64 @@ mod tests {
 
     #[test]
     fn test_parse_command_simple() {
-        let (cmd, args, redirect) = parse_command("ls -l");
+        let (cmd, args, filename, redirect) = parse_command("ls -l");
         assert_eq!(cmd, "ls");
         assert_eq!(args, vec!["-l"]);
+        assert_eq!(filename, None);
         assert_eq!(redirect, None);
     }
 
     #[test]
     fn test_parse_command_with_quotes() {
-        let (cmd, args, redirect) = parse_command("echo 'hello world'");
+        let (cmd, args, filename, redirect) = parse_command("echo 'hello world'");
         assert_eq!(cmd, "echo");
         assert_eq!(args, vec!["hello world"]);
+        assert_eq!(filename, None);
         assert_eq!(redirect, None);
     }
 
     #[test]
     fn test_parse_command_redirect() {
-        let (cmd, args, redirect) = parse_command("echo hello > output.txt");
+        let (cmd, args, filename, redirect) = parse_command("echo hello > output.txt");
         assert_eq!(cmd, "echo");
         assert_eq!(args, vec!["hello"]);
-        assert_eq!(redirect, Some("output.txt".to_string()));
+        assert_eq!(filename, Some("output.txt".to_string()));
+        assert_eq!(redirect, Some(RedirectTo::Stdout));
     }
 
     #[test]
     fn test_parse_command_redirect_explicit() {
-        let (cmd, args, redirect) = parse_command("cat file 1> out");
+        let (cmd, args, filename, redirect) = parse_command("cat file 1> out");
         assert_eq!(cmd, "cat");
         assert_eq!(args, vec!["file"]);
-        assert_eq!(redirect, Some("out".to_string()));
+        assert_eq!(filename, Some("out".to_string()));
+        assert_eq!(redirect, Some(RedirectTo::Stdout));
     }
 
     #[test]
     fn test_parse_command_redirect_quoted_filename() {
-        let (cmd, args, redirect) = parse_command("ls > 'my file'");
+        let (cmd, args, filename, redirect) = parse_command("ls > 'my file'");
         assert_eq!(cmd, "ls");
         assert!(args.is_empty());
-        assert_eq!(redirect, Some("my file".to_string()));
+        assert_eq!(filename, Some("my file".to_string()));
+        assert_eq!(redirect, Some(RedirectTo::Stdout));
+    }
+
+    #[test]
+    fn test_parse_command_redirect_stderr() {
+        let (cmd, args, filename, redirect) = parse_command("ls 2> error.log");
+        assert_eq!(cmd, "ls");
+        assert!(args.is_empty());
+        assert_eq!(filename, Some("error.log".to_string()));
+        assert_eq!(redirect, Some(RedirectTo::Stderr));
+    }
+
+    #[test]
+    fn test_parse_command_redirect_stderr_with_args() {
+        let (cmd, args, filename, redirect) = parse_command("grep foo bar 2> error.log");
+        assert_eq!(cmd, "grep");
+        assert_eq!(args, vec!["foo", "bar"]);
+        assert_eq!(filename, Some("error.log".to_string()));
+        assert_eq!(redirect, Some(RedirectTo::Stderr));
     }
 }

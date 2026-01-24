@@ -34,21 +34,22 @@ pub fn find_executable_in_path(executable: &str, path_env_opt: Option<&str>) -> 
     None
 }
 
-class RedirectTo {
-    enum STDOUT,
-    enum STDERR,
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum RedirectTo {
+    Stdout,
+    Stderr,
 }
 
 pub fn parse_command(input: &str) -> (String, Vec<String>, Option<String>, Option<RedirectTo>) {
     let input = input.trim();
-    let (command, rest, redirect_to) = input.split_once(' ').unwrap_or((input, ""));
+    let (command, rest) = input.split_once(' ').unwrap_or((input, ""));
 
-    let (args, filename) = if let Some((a, f)) = rest.split_once("1>") {
-        (parse_args(a), Some(f.trim().trim_matches('"').trim_matches('\'').to_string()), RedirectTo::STDOUT)
-    } else if let Some((a, f)) = rest.split_once('2>') {
-        (parse_args(a), Some(f.trim().trim_matches('"').trim_matches('\'').to_string()), RedirectTo::STDERR)
+    let (args, filename, redirect_to) = if let Some((a, f)) = rest.split_once("1>") {
+        (parse_args(a), Some(f.trim().trim_matches('"').trim_matches('\'').to_string()), Some(RedirectTo::Stdout))
+    } else if let Some((a, f)) = rest.split_once("2>") {
+        (parse_args(a), Some(f.trim().trim_matches('"').trim_matches('\'').to_string()), Some(RedirectTo::Stderr))
     } else if let Some((a, f)) = rest.split_once('>') {
-        (parse_args(a), Some(f.trim().trim_matches('"').trim_matches('\'').to_string()), RedirectTo::STDOUT)
+        (parse_args(a), Some(f.trim().trim_matches('"').trim_matches('\'').to_string()), Some(RedirectTo::Stdout))
     } else {
         (parse_args(rest), None, None)
     };
@@ -135,14 +136,20 @@ fn main() {
                 cmd.args(args);
 
                 if !filename.is_empty() {
-                    if let Ok(file) = std::fs::File::create(filename) {
-                        if stdout_or_stderr == STDOUT {
-                            cmd.stdout(file);
-                        } else if stdout_or_stderr == STDERR {
-                            cmd.stderr(file);
+                    match std::fs::File::create(filename) {
+                        Ok(file) => {
+                            if stdout_or_stderr == Some(RedirectTo::Stdout) {
+                                cmd.stdout(file);
+                            } else if stdout_or_stderr == Some(RedirectTo::Stderr) {
+                                cmd.stderr(file);
+                            }
+                        }
+                        Err(_) => {
+                            println!("{}: cannot open file for output redirection", filename);
+                            continue;
                         }
                     }
-                } // else cmd prints to stdout
+                }
 
                 let status = cmd.status();
                 match status {
