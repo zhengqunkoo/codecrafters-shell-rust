@@ -84,12 +84,14 @@ fn main() {
         io::stdout().flush().unwrap();
         let mut console_input = String::new();
         let _ = io::stdin().read_line(&mut console_input);
-        let (command, args, filename_opt, stdout_or_stderr) = parse_command(&console_input);
+        let (command, args, filename_opt, redirect_to) = parse_command(&console_input);
         let filename = filename_opt.as_deref().unwrap_or("");
 
         // `string_for_stdout`` will either be printed to the console, or written to `filename`.
         // Errors are printed to the console directly.
+        // These variables are only for builtin commands.
         let mut string_for_stdout = String::new();
+        let mut string_for_stderr = String::new();
         match command.as_str() {
             "exit" => break,
             "echo" => {
@@ -112,21 +114,21 @@ fn main() {
             "pwd" => {
                 match env::current_dir() {
                     Ok(path) => string_for_stdout = path.display().to_string() + "\n",
-                    Err(e) => println!("pwd: error retrieving current directory: {}", e),
+                    Err(e) => string_for_stderr = format!("pwd: error retrieving current directory: {}\n", e),
                 }
             },
             "cd" => {
                 if args.len() > 1 {
-                    println!("cd: too many arguments");
-                    continue;
-                }
-                let target_dir = if args.len() == 0 || args[0] == "~" {
-                        env::var("HOME").unwrap_or_else(|_| String::new())
-                    } else {
-                        args[0].to_string()
-                    };
-                if let Err(_) = env::set_current_dir(&target_dir) { // this also handles relative paths
-                    println!("cd: {}: No such file or directory", target_dir);
+                    string_for_stderr = "cd: too many arguments\n".to_string();
+                } else {
+                    let target_dir = if args.len() == 0 || args[0] == "~" {
+                            env::var("HOME").unwrap_or_else(|_| String::new())
+                        } else {
+                            args[0].to_string()
+                        };
+                    if let Err(_) = env::set_current_dir(&target_dir) { // this also handles relative paths
+                        string_for_stderr = format!("cd: {}: No such file or directory\n", target_dir);
+                    }
                 }
             },
             "" => continue, // empty input, just reprompt
@@ -138,9 +140,9 @@ fn main() {
                 if !filename.is_empty() {
                     match std::fs::File::create(filename) {
                         Ok(file) => {
-                            if stdout_or_stderr == Some(RedirectTo::Stdout) {
+                            if redirect_to == Some(RedirectTo::Stdout) {
                                 cmd.stdout(file);
-                            } else if stdout_or_stderr == Some(RedirectTo::Stderr) {
+                            } else if redirect_to == Some(RedirectTo::Stderr) {
                                 cmd.stderr(file);
                             }
                         }
@@ -162,29 +164,53 @@ fn main() {
                 }
                 continue; // This is necessary to prevent my shell from overwriting the external command's work with an empty string in the postprocessing step below.
             } else {
-                println!("{}: command not found", command);
+                string_for_stderr = format!("{}: command not found\n", command);
             }
         }
 
-        // Handle filename. Open file descriptor
+        // Handle file redirects for builtin commands
         if filename.is_empty() {
             // No output redirection, print to console
             print!("{}", string_for_stdout);
+            eprint!("{}", string_for_stderr);
         } else {
-            // Redirect output to file
-            let stdout_file = std::fs::OpenOptions::new()
-                .create(true)
-                .write(true)
-                .truncate(true)
-                .open(filename);
-            
-            match stdout_file {
-                Ok(mut file) => {
-                    write!(file, "{}", string_for_stdout).unwrap();
-                },
-                Err(_) => {
-                    println!("{}: cannot open file for output redirection", filename);
+            if redirect_to == Some(RedirectTo::Stdout) {
+                // Redirect output to file
+                eprint!("{}", string_for_stderr);
+                let stdout_file = std::fs::OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .truncate(true)
+                    .open(filename);
+                
+                match stdout_file {
+                    Ok(mut file) => {
+                        write!(file, "{}", string_for_stdout).unwrap();
+                    },
+                    Err(_) => {
+                        println!("{}: cannot open file for output redirection", filename);
+                    }
                 }
+            } else if redirect_to == Some(RedirectTo::Stderr) {
+                // Redirect stderr to file
+                print!("{}", string_for_stdout);
+                let stderr_file = std::fs::OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .truncate(true)
+                    .open(filename);
+                
+                match stderr_file {
+                    Ok(mut file) => {
+                        write!(file, "{}", string_for_stderr).unwrap();
+                    },
+                    Err(_) => {
+                        println!("{}: cannot open file for output redirection", filename);
+                    }
+                }
+            } else {
+                // This case should not happen, but handle gracefully.
+                println!("{}: invalid redirection", filename);
             }
         }
     }
