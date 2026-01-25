@@ -276,7 +276,7 @@ impl MyHelper {
             .commands
             .iter()
             .filter(|cmd| cmd.starts_with(word_to_complete))
-            .cloned()
+            .map(|cmd| format!("{} ", cmd))
             .collect();
 
         (start, matches)

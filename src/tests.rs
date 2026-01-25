@@ -11,7 +11,7 @@ mod tests {
         };
         let (start, matches) = helper.get_suggestions("echo", 4);
         assert_eq!(start, 0);
-        assert_eq!(matches, vec!["echo"]);
+        assert_eq!(matches, vec!["echo "]);
     }
 
     #[test]
@@ -21,7 +21,7 @@ mod tests {
         };
         let (start, matches) = helper.get_suggestions("ec", 2);
         assert_eq!(start, 0);
-        assert_eq!(matches, vec!["echo"]);
+        assert_eq!(matches, vec!["echo "]);
     }
 
     #[test]
@@ -32,9 +32,9 @@ mod tests {
         let (start, matches) = helper.get_suggestions("ec", 2);
         assert_eq!(start, 0);
         // "exit" should not match "ec"
-        assert!(matches.contains(&"echo".to_string()));
-        assert!(matches.contains(&"echoloco".to_string()));
-        assert!(!matches.contains(&"exit".to_string()));
+        assert!(matches.contains(&"echo ".to_string()));
+        assert!(matches.contains(&"echoloco ".to_string()));
+        assert!(!matches.contains(&"exit ".to_string()));
         assert_eq!(matches.len(), 2);
     }
 
@@ -57,7 +57,7 @@ mod tests {
         // "sudo ec" -> should suggest "echo"
         let (start, matches) = helper.get_suggestions("sudo ec", 7);
         assert_eq!(start, 5); // "sudo " is 5 chars
-        assert_eq!(matches, vec!["echo"]);
+        assert_eq!(matches, vec!["echo "]);
     }
 
     #[test]
