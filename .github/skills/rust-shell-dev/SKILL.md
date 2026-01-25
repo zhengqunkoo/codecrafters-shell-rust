@@ -7,6 +7,8 @@ description: Expert guide for developing features, adding commands, and testing 
 
 Use this skill when the user asks to modify the shell's behavior, add commands, or fix bugs in `codecrafters-shell-rust`.
 
+**IMPORTANT**: Before executing any task, check `.github/skills/reflect/SKILL.md` for any "Learned Corrections" that might apply to your task.
+
 ## Capability: Add Builtin Command
 
 When the user asks to create a new builtin command (e.g., `history`, `alias`, `export`):
