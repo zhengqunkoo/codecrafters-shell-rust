@@ -1,8 +1,64 @@
 #[cfg(test)]
 mod tests {
-    use crate::{find_executable_in_path, parse_args, parse_command, execute_command, RedirectTo};
+    use crate::{find_executable_in_path, parse_args, parse_command, execute_command, RedirectTo, MyHelper};
     use std::fs::File;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn test_completion_exact_match() {
+        let helper = MyHelper {
+            commands: vec!["echo".into(), "exit".into()],
+        };
+        let (start, matches) = helper.get_suggestions("echo", 4);
+        assert_eq!(start, 0);
+        assert_eq!(matches, vec!["echo"]);
+    }
+
+    #[test]
+    fn test_completion_partial_match() {
+        let helper = MyHelper {
+            commands: vec!["echo".into(), "exit".into()],
+        };
+        let (start, matches) = helper.get_suggestions("ec", 2);
+        assert_eq!(start, 0);
+        assert_eq!(matches, vec!["echo"]);
+    }
+
+    #[test]
+    fn test_completion_multiple_matches() {
+        let helper = MyHelper {
+            commands: vec!["echo".into(), "exit".into(), "echoloco".into()],
+        };
+        let (start, matches) = helper.get_suggestions("ec", 2);
+        assert_eq!(start, 0);
+        // "exit" should not match "ec"
+        assert!(matches.contains(&"echo".to_string()));
+        assert!(matches.contains(&"echoloco".to_string()));
+        assert!(!matches.contains(&"exit".to_string()));
+        assert_eq!(matches.len(), 2);
+    }
+
+    #[test]
+    fn test_completion_no_match() {
+        let helper = MyHelper {
+            commands: vec!["echo".into(), "exit".into()],
+        };
+        let (start, matches) = helper.get_suggestions("foo", 3);
+        assert_eq!(start, 0);
+        assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn test_completion_second_argument() {
+        // Our current logic only looks at the last word based on space splitting.
+        let helper = MyHelper {
+            commands: vec!["echo".into(), "exit".into()],
+        };
+        // "sudo ec" -> should suggest "echo"
+        let (start, matches) = helper.get_suggestions("sudo ec", 7);
+        assert_eq!(start, 5); // "sudo " is 5 chars
+        assert_eq!(matches, vec!["echo"]);
+    }
 
     #[test]
     fn test_parse_args_simple() {

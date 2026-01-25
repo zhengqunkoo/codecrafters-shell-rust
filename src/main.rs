@@ -4,9 +4,14 @@ use std::env;
 #[cfg(test)]
 mod tests;
 
-use std::io::{self, Write};
+use std::io::Write;
 #[cfg(target_family = "unix")]
 use std::os::unix::fs::PermissionsExt;
+
+use rustyline::completion::{Completer, Pair};
+use rustyline::error::ReadlineError;
+use rustyline::{Context, Editor, Result};
+use rustyline_derive::{Helper, Highlighter, Hinter, Validator};
 
 pub fn find_executable_in_path(executable: &str, path_env_opt: Option<&str>) -> Option<std::path::PathBuf> {
     let default_path;
@@ -47,17 +52,17 @@ pub fn parse_command(input: &str) -> (String, Vec<String>, Option<String>, Optio
     let (command, rest) = input.split_once(' ').unwrap_or((input, ""));
 
     let (args, filename, redirect_to) = if let Some((a, f)) = rest.split_once("1>>") {
-        (parse_args(a), Some(f.trim().trim_matches('"').trim_matches('\'').to_string()), Some(RedirectTo::StdoutAppend))
+        (parse_args(a), Some(f.trim().trim_matches(|c| c == '\'' || c == '"').to_string()), Some(RedirectTo::StdoutAppend))
     } else if let Some((a, f)) = rest.split_once("2>>") {
-        (parse_args(a), Some(f.trim().trim_matches('"').trim_matches('\'').to_string()), Some(RedirectTo::StderrAppend))
+        (parse_args(a), Some(f.trim().trim_matches(|c| c == '\'' || c == '"').to_string()), Some(RedirectTo::StderrAppend))
     } else if let Some((a, f)) = rest.split_once(">>") {
-        (parse_args(a), Some(f.trim().trim_matches('"').trim_matches('\'').to_string()), Some(RedirectTo::StdoutAppend))
+        (parse_args(a), Some(f.trim().trim_matches(|c| c == '\'' || c == '"').to_string()), Some(RedirectTo::StdoutAppend))
     } else if let Some((a, f)) = rest.split_once("1>") {
-        (parse_args(a), Some(f.trim().trim_matches('"').trim_matches('\'').to_string()), Some(RedirectTo::Stdout))
+        (parse_args(a), Some(f.trim().trim_matches(|c| c == '\'' || c == '"').to_string()), Some(RedirectTo::Stdout))
     } else if let Some((a, f)) = rest.split_once("2>") {
-        (parse_args(a), Some(f.trim().trim_matches('"').trim_matches('\'').to_string()), Some(RedirectTo::Stderr))
+        (parse_args(a), Some(f.trim().trim_matches(|c| c == '\'' || c == '"').to_string()), Some(RedirectTo::Stderr))
     } else if let Some((a, f)) = rest.split_once('>') {
-        (parse_args(a), Some(f.trim().trim_matches('"').trim_matches('\'').to_string()), Some(RedirectTo::Stdout))
+        (parse_args(a), Some(f.trim().trim_matches(|c| c == '\'' || c == '"').to_string()), Some(RedirectTo::Stdout))
     } else {
         (parse_args(rest), None, None)
     };
@@ -255,17 +260,91 @@ pub fn execute_command(command: &str, args: Vec<String>, filename: &str, redirec
     true
 }
 
-fn main() {
-    loop {
-        print!("$ ");
-        io::stdout().flush().unwrap();
-        let mut console_input = String::new();
-        let _ = io::stdin().read_line(&mut console_input);
-        let (command, args, filename_opt, redirect_to) = parse_command(&console_input);
-        let filename = filename_opt.as_deref().unwrap_or("");
+#[derive(Helper, Highlighter, Hinter, Validator)]
+pub struct MyHelper {
+    pub commands: Vec<String>,
+}
 
-        if !execute_command(&command, args, filename, redirect_to) {
-            break;
+impl MyHelper {
+    pub fn get_suggestions(&self, line: &str, pos: usize) -> (usize, Vec<String>) {
+        let (start, word_to_complete) = {
+            let split_idx = line[..pos].rfind(' ').map(|i| i + 1).unwrap_or(0);
+            (split_idx, &line[split_idx..pos])
+        };
+
+        let matches: Vec<String> = self
+            .commands
+            .iter()
+            .filter(|cmd| cmd.starts_with(word_to_complete))
+            .cloned()
+            .collect();
+
+        (start, matches)
+    }
+}
+
+impl Completer for MyHelper {
+    type Candidate = Pair;
+
+    fn complete(
+        &self,
+        line: &str,
+        pos: usize,
+        _ctx: &Context<'_>,
+    ) -> Result<(usize, Vec<Pair>)> {
+        let (start, matches) = self.get_suggestions(line, pos);
+
+        let pairs = matches
+            .into_iter()
+            .map(|cmd| Pair {
+                display: cmd.clone(),
+                replacement: cmd,
+            })
+            .collect();
+
+        Ok((start, pairs))
+    }
+}
+
+fn main() -> Result<()> {
+    let helper = MyHelper {
+        commands: vec![
+            "exit".into(), 
+            "echo".into(), 
+            "type".into(), 
+            "pwd".into(), 
+            "cd".into()
+        ],
+    };
+
+    let mut rl = Editor::new()?;
+    rl.set_helper(Some(helper));
+
+    loop {
+        let readline = rl.readline("$ ");
+        match readline {
+            Ok(line) => {
+                let (command, args, filename_opt, redirect_to) = parse_command(&line);
+                let filename = filename_opt.as_deref().unwrap_or("");
+
+                if !execute_command(&command, args, filename, redirect_to) {
+                    break;
+                }
+                rl.add_history_entry(line.as_str())?;
+            }
+            Err(ReadlineError::Interrupted) => {
+                println!("Ctrl-C");
+                break;
+            }
+            Err(ReadlineError::Eof) => {
+                println!("Ctrl-D");
+                break;
+            }
+            Err(err) => {
+                println!("Error: {:?}", err);
+                break;
+            }
         }
     }
+    Ok(())
 }
