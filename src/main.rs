@@ -263,6 +263,7 @@ pub fn execute_command(command: &str, args: Vec<String>, filename: &str, redirec
 #[derive(Helper, Highlighter, Hinter, Validator)]
 pub struct MyHelper {
     pub commands: Vec<String>,
+    pub path_dirs: Vec<std::path::PathBuf>, // New field
 }
 
 impl MyHelper {
@@ -272,14 +273,50 @@ impl MyHelper {
             (split_idx, &line[split_idx..pos])
         };
 
-        let matches: Vec<String> = self
+        let mut all_matches: Vec<String> = self
             .commands
             .iter()
             .filter(|cmd| cmd.starts_with(word_to_complete))
             .map(|cmd| format!("{} ", cmd))
             .collect();
 
-        (start, matches)
+        // Add executable suggestions
+        let mut executable_matches = self.get_executable_suggestions(word_to_complete);
+        all_matches.append(&mut executable_matches);
+
+        all_matches.sort(); // Sort all matches
+        all_matches.dedup(); // Remove duplicates
+
+        (start, all_matches)
+    }
+
+    fn get_executable_suggestions(&self, word_to_complete: &str) -> Vec<String> {
+        let mut suggestions = Vec::new();
+        for path_dir in &self.path_dirs {
+            if let Ok(entries) = std::fs::read_dir(path_dir) {
+                for entry in entries.flatten() {
+                    let file_name = entry.file_name();
+                    if let Some(name_str) = file_name.to_str() {
+                        if name_str.starts_with(word_to_complete) {
+                            let full_path = path_dir.join(name_str);
+                            if let Ok(metadata) = std::fs::metadata(&full_path) {
+                                #[cfg(target_family = "unix")]
+                                if metadata.is_file() && metadata.permissions().mode() & 0o111 != 0 {
+                                    suggestions.push(format!("{} ", name_str));
+                                }
+                                #[cfg(target_family = "windows")]
+                                if metadata.is_file() { // Simpler check for Windows
+                                    suggestions.push(format!("{} ", name_str));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        suggestions.sort(); // Sort for consistent order
+        suggestions.dedup(); // Remove duplicates
+        suggestions
     }
 }
 
@@ -307,6 +344,16 @@ impl Completer for MyHelper {
 }
 
 fn main() -> Result<()> {
+    let path_env = env::var("PATH").unwrap_or_default();
+    let splitter = if cfg!(windows) { ';' } else { ':' };
+    let path_dirs: Vec<std::path::PathBuf> = path_env
+        .split(splitter)
+        .filter_map(|p| {
+            let path = std::path::PathBuf::from(p);
+            if path.is_dir() { Some(path) } else { None }
+        })
+        .collect();
+
     let helper = MyHelper {
         commands: vec![
             "exit".into(), 
@@ -315,6 +362,7 @@ fn main() -> Result<()> {
             "pwd".into(), 
             "cd".into()
         ],
+        path_dirs, // Initialize new field
     };
 
     let mut rl = Editor::new()?;

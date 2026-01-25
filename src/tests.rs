@@ -8,6 +8,7 @@ mod tests {
     fn test_completion_exact_match() {
         let helper = MyHelper {
             commands: vec!["echo".into(), "exit".into()],
+            path_dirs: vec![],
         };
         let (start, matches) = helper.get_suggestions("echo", 4);
         assert_eq!(start, 0);
@@ -15,9 +16,10 @@ mod tests {
     }
 
     #[test]
-    fn test_completion_partial_match() {
+    fn test_completion_partial_match() { // Re-added function definition
         let helper = MyHelper {
             commands: vec!["echo".into(), "exit".into()],
+            path_dirs: vec![],
         };
         let (start, matches) = helper.get_suggestions("ec", 2);
         assert_eq!(start, 0);
@@ -28,6 +30,7 @@ mod tests {
     fn test_completion_multiple_matches() {
         let helper = MyHelper {
             commands: vec!["echo".into(), "exit".into(), "echoloco".into()],
+            path_dirs: vec![],
         };
         let (start, matches) = helper.get_suggestions("ec", 2);
         assert_eq!(start, 0);
@@ -39,9 +42,10 @@ mod tests {
     }
 
     #[test]
-    fn test_completion_no_match() {
+    fn test_completion_no_match() { // Re-added function definition
         let helper = MyHelper {
             commands: vec!["echo".into(), "exit".into()],
+            path_dirs: vec![],
         };
         let (start, matches) = helper.get_suggestions("foo", 3);
         assert_eq!(start, 0);
@@ -53,11 +57,28 @@ mod tests {
         // Our current logic only looks at the last word based on space splitting.
         let helper = MyHelper {
             commands: vec!["echo".into(), "exit".into()],
+            path_dirs: vec![],
         };
         // "sudo ec" -> should suggest "echo"
         let (start, matches) = helper.get_suggestions("sudo ec", 7);
         assert_eq!(start, 5); // "sudo " is 5 chars
         assert_eq!(matches, vec!["echo "]);
+    }
+
+    #[test]
+    fn test_completion_executable_match() {
+        let (temp_dir, exec_path) = setup_executable("my_custom_exec");
+        let helper = MyHelper {
+            commands: vec!["echo".into()],
+            path_dirs: vec![temp_dir.clone()],
+        };
+        let (start, matches) = helper.get_suggestions("my_c", 4);
+        assert_eq!(start, 0);
+        assert!(matches.contains(&"my_custom_exec ".to_string()));
+        assert_eq!(matches.len(), 1); // Only one match expected
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(temp_dir);
     }
 
     #[test]
