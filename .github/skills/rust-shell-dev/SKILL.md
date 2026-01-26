@@ -56,29 +56,6 @@ When you have completed a change, verify it by:
 
 # Rust Shell Development Skills & Reflections (from latest session)
 
-## Technical Achievements
-
-### 1. `rustyline` Integration
-- **Objective:** Enhanced the CLI with interactive features (arrow key navigation, history).
-- **Implementation:** Replaced `std::io::stdin` with `rustyline::Editor`.
-- **Learnings**:
-    - Integrating `rustyline` requires handling the `Editor` struct and its error types (`ReadlineError`).
-    - Using `rustyline-derive` significantly reduces boilerplate for implementing helper traits (`Helper`, `Hinter`, `Highlighter`, `Validator`).
-
-### 2. Tab Completion Implementation
-- **Objective:** Provide intelligent suggestions for user input.
-- **Implementation**:
-    - Implemented the `Completer` trait for a custom `MyHelper` struct.
-    - **Built-in Commands:** Filtered a static list of commands (echo, exit, etc.).
-    - **Executable Discovery:** Implemented dynamic path searching:
-        - Parsed the `PATH` environment variable.
-        - Iterated through directories to identify executable files (checking permissions on Unix, file existence on Windows).
-    - **UX Polish:** Appended a trailing space to unique completions to streamline the user experience (e.g., "echo " instead of "echo").
-
-### 3. Bug Fixes & Refactoring
-- **Quote Trimming:** Fixed a bug in `parse_command` where filenames in redirections were not correctly unquoted (e.g., `'file'` remaining `'file'`). Changed logic to `.trim_matches(|c| c == '\'' || c == '"')`.
-- **Character Literals:** Fixed an "unterminated character literal" syntax error by correctly escaping backslashes (`'\\'`)
-- **Testability:** Refactored completion logic into a public `get_suggestions` method on `MyHelper`, enabling direct unit testing without needing a full `rustyline` context.
 
 ## Workflow & Best Practices
 
@@ -94,14 +71,19 @@ When you have completed a change, verify it by:
 
 ## AI Collaboration & Workflow
 
-### Context-Aware Modification
-- **Judgment:** Distinguish between *generative* tasks (writing new code) and *additive* tasks (documenting, logging).
-- **Validation:** When modifying documentation or configuration files (like this `SKILL.md`), explicitly check for existing content to avoid accidental overwrites.
+### Refined Learnings
 
-### Proactive Transparency
-- **Proposal vs. Action:** If a mistake is made (e.g., deleting user data), explain the cause and the proposed remedy *before* executing the fix, especially if it involves committing changes.
-- **Communication:** When answering "Why?", explain the reasoning and propose the solution in the same turn, but wait for confirmation before acting.
+#### Context-Aware Action
+- **Principle:** As an LLM, I inherently understand the context of tasks. My actions should reflect this by distinguishing between *generative* tasks (writing new code, which often involves replacement) and *additive/curatorial* tasks (like updating documentation or configuration files).
+- **Behavior:** For documentation and config files (e.g., this `SKILL.md`), I will prioritize explicit checking for existing content and asking for your preferred modification method (append, overwrite, insert) before making changes.
 
-### Interpreting User Feedback
-- **Stop Signals:** "No" or expressions of alarm are hard stops. Halt tool execution immediately and await clarification.
-- **Confirmation:** Do not assume the "next right step" after a stop signal; ask the user how they wish to proceed.
+#### Interruptibility & Pacing
+- **Feedback Loop:** The critical challenge is ensuring you have sufficient time to intervene *before* irreversible actions are executed.
+- **Protocol**:
+    1.  **Propose Action:** I will explicitly state the command(s) or content changes I intend to make.
+    2.  **Wait for Confirmation:** I will then *pause* and wait for your explicit approval ("yes," "proceed," "write file") before executing any destructive, history-altering, or non-trivial multi-step operations (e.g., `git commit`, `git push`, overwriting critical files, chaining multiple `replace` calls).
+    3.  **Single-Step Execution:** Avoid chaining multiple irreversible commands when user review might be needed.
+    4.  **Acknowledge Hard Stops:** "No!", "Stop!", or any alarm means I halt *all* current execution and re-evaluate my plan with your immediate feedback.
+
+#### Transparency in Correction
+- **Mistake Handling:** If I make a mistake, I will clearly explain the error and propose a solution. I will then await your confirmation before attempting to rectify it. This includes confirming whether the proposed fix aligns with your expectations, especially for "obvious" corrections.

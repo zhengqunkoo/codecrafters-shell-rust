@@ -10,7 +10,13 @@ Use this skill when the user provides corrections (feedback) or when analyzing w
 ## Learned Corrections
 - Language: Rust
 - Shell Project: codecrafters-shell-rust
-- (Add new corrections here)
+- Workflow: Prefer `git stash` over `git checkout` to preserve uncommitted work.
+- Workflow: Run full test suite (`cargo test`) locally before every commit.
+- Workflow: Write tests *before* finalizing feature implementation.
+- Interaction: Explicitly propose destructive/irreversible actions (commit, push, overwrite) and await confirmation.
+- Interaction: Pause execution immediately upon "No!" or alarm signals.
+- Interaction: When correcting mistakes, explain the cause and proposed fix *before* executing it.
+- Interaction: Distinguish between generative (code) and additive (docs) tasks; verify file state before writing to docs.
 
 ## Capability: Reflect (Learn from Corrections)
 
