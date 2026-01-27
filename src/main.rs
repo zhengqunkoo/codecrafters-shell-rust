@@ -7,10 +7,11 @@ mod tests;
 use std::io::Write;
 #[cfg(target_family = "unix")]
 use std::os::unix::fs::PermissionsExt;
+use std::sync::{Arc, Mutex};
 
 use rustyline::completion::{Completer, Pair};
 use rustyline::error::ReadlineError;
-use rustyline::{Context, Editor, Result};
+use rustyline::{Context, Editor, Result, EventHandler, ConditionalEventHandler, Event, EventContext, RepeatCount, Cmd, KeyCode, KeyEvent, Modifiers};
 use rustyline_derive::{Helper, Highlighter, Hinter, Validator};
 
 pub fn find_executable_in_path(executable: &str, path_env_opt: Option<&str>) -> Option<std::path::PathBuf> {
@@ -85,15 +86,8 @@ pub fn parse_args(args: &str) -> Vec<String> {
             }
         } else if in_double_quote {
             if c == '"' {
-                // Handle escaped double quotes slightly?
-                // For now, no backslash support as per previous simple implementation level, 
-                // but strictly treating " as terminator matches previous logic style.
                 in_double_quote = false;
             } else if c == '\\' {
-                // If we want to support escaped double quotes like \" inside ", we need lookahead or state.
-                // Given the constraints and likely tests, preserving non-quote behavior is safest
-                // until explicit backslash escaping is required.
-                // However, standard shells consume backslash inside double quotes only for $ ` " \.
                 current_arg.push(c);
             } else {
                 current_arg.push(c);
@@ -109,8 +103,6 @@ pub fn parse_args(args: &str) -> Vec<String> {
                      current_arg.clear();
                  }
             } else if c == '\\' { 
-                 // Outside quotes, backslash usually escapes next char.
-                 // We push it for now to match old behavior unless we implement full escaping.
                  current_arg.push(c);
             } else {
                 current_arg.push(c);
@@ -263,7 +255,7 @@ pub fn execute_command(command: &str, args: Vec<String>, filename: &str, redirec
 #[derive(Helper, Highlighter, Hinter, Validator)]
 pub struct MyHelper {
     pub commands: Vec<String>,
-    pub path_dirs: Vec<std::path::PathBuf>, // New field
+    pub path_dirs: Vec<std::path::PathBuf>,
 }
 
 impl MyHelper {
@@ -280,12 +272,11 @@ impl MyHelper {
             .map(|cmd| format!("{} ", cmd))
             .collect();
 
-        // Add executable suggestions
         let mut executable_matches = self.get_executable_suggestions(word_to_complete);
         all_matches.append(&mut executable_matches);
 
-        all_matches.sort(); // Sort all matches
-        all_matches.dedup(); // Remove duplicates
+        all_matches.sort();
+        all_matches.dedup();
 
         (start, all_matches)
     }
@@ -305,7 +296,7 @@ impl MyHelper {
                                     suggestions.push(format!("{} ", name_str));
                                 }
                                 #[cfg(target_family = "windows")]
-                                if metadata.is_file() { // Simpler check for Windows
+                                if metadata.is_file() {
                                     suggestions.push(format!("{} ", name_str));
                                 }
                             }
@@ -314,8 +305,8 @@ impl MyHelper {
                 }
             }
         }
-        suggestions.sort(); // Sort for consistent order
-        suggestions.dedup(); // Remove duplicates
+        suggestions.sort();
+        suggestions.dedup();
         suggestions
     }
 }
@@ -343,6 +334,102 @@ impl Completer for MyHelper {
     }
 }
 
+struct TabState {
+    consecutive_tabs: usize,
+    last_line: String,
+    last_pos: usize,
+}
+
+struct MyTabHandler {
+    state: Arc<Mutex<TabState>>,
+    commands: Vec<String>,
+    path_dirs: Vec<std::path::PathBuf>,
+}
+
+impl MyTabHandler {
+     fn get_suggestions(&self, line: &str, pos: usize) -> Vec<String> {
+        let (_, word_to_complete) = {
+            let split_idx = line[..pos].rfind(' ').map(|i| i + 1).unwrap_or(0);
+            (split_idx, &line[split_idx..pos])
+        };
+
+        let mut all_matches: Vec<String> = self
+            .commands
+            .iter()
+            .filter(|cmd| cmd.starts_with(word_to_complete))
+            .map(|cmd| cmd.to_string())
+            .collect();
+
+        for path_dir in &self.path_dirs {
+            if let Ok(entries) = std::fs::read_dir(path_dir) {
+                for entry in entries.flatten() {
+                    let file_name = entry.file_name();
+                    if let Some(name_str) = file_name.to_str() {
+                        if name_str.starts_with(word_to_complete) {
+                            let full_path = path_dir.join(name_str);
+                            if let Ok(metadata) = std::fs::metadata(&full_path) {
+                                #[cfg(target_family = "unix")]
+                                if metadata.is_file() && metadata.permissions().mode() & 0o111 != 0 {
+                                    all_matches.push(name_str.to_string());
+                                }
+                                #[cfg(target_family = "windows")]
+                                if metadata.is_file() {
+                                    all_matches.push(name_str.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        all_matches.sort();
+        all_matches.dedup();
+        all_matches
+    }
+}
+
+impl ConditionalEventHandler for MyTabHandler {
+    fn handle(&self, _event: &Event, _: RepeatCount, _: bool, ctx: &EventContext) -> Option<Cmd> {
+        let current_line = ctx.line().to_string();
+        let current_pos = ctx.pos();
+        let matches = self.get_suggestions(&current_line, current_pos);
+
+        if matches.len() == 1 {
+            return Some(Cmd::Complete);
+        }
+
+        let mut state = self.state.lock().unwrap();
+
+        if current_line != state.last_line || current_pos != state.last_pos {
+             state.consecutive_tabs = 0;
+             state.last_line = current_line.clone();
+             state.last_pos = current_pos;
+        }
+
+        if matches.is_empty() {
+             print!("\x07");
+             std::io::stdout().flush().unwrap();
+             return Some(Cmd::Noop);
+        }
+
+        state.consecutive_tabs += 1;
+
+        if state.consecutive_tabs == 1 {
+             print!("\x07");
+             std::io::stdout().flush().unwrap();
+             Some(Cmd::Noop)
+        } else {
+             print!("\n");
+             let joined = matches.join("  ");
+             print!("{}", joined);
+             print!("\n");
+             print!("$ {}", current_line);
+             std::io::stdout().flush().unwrap();
+             Some(Cmd::Noop)
+        }
+    }
+}
+
 fn main() -> Result<()> {
     let path_env = env::var("PATH").unwrap_or_default();
     let splitter = if cfg!(windows) { ';' } else { ':' };
@@ -354,19 +441,34 @@ fn main() -> Result<()> {
         })
         .collect();
 
-    let helper = MyHelper {
-        commands: vec![
+    let commands = vec![
             "exit".into(), 
             "echo".into(), 
             "type".into(), 
             "pwd".into(), 
             "cd".into()
-        ],
-        path_dirs, // Initialize new field
+        ];
+
+    let helper = MyHelper {
+        commands: commands.clone(),
+        path_dirs: path_dirs.clone(),
+    };
+
+    let tab_state = Arc::new(Mutex::new(TabState {
+        consecutive_tabs: 0,
+        last_line: String::new(),
+        last_pos: 0,
+    }));
+
+    let tab_handler = MyTabHandler {
+        state: tab_state,
+        commands: commands.clone(),
+        path_dirs: path_dirs.clone(),
     };
 
     let mut rl = Editor::new()?;
     rl.set_helper(Some(helper));
+    rl.bind_sequence(KeyEvent(KeyCode::Tab, Modifiers::NONE), EventHandler::Conditional(Box::new(tab_handler)));
 
     loop {
         let readline = rl.readline("$ ");
