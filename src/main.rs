@@ -284,24 +284,25 @@ impl MyHelper {
     fn get_executable_suggestions(&self, word_to_complete: &str) -> Vec<String> {
         let mut suggestions = Vec::new();
         for path_dir in &self.path_dirs {
-            if let Ok(entries) = std::fs::read_dir(path_dir) {
-                for entry in entries.flatten() {
-                    let file_name = entry.file_name();
-                    if let Some(name_str) = file_name.to_str() {
-                        if name_str.starts_with(word_to_complete) {
-                            let full_path = path_dir.join(name_str);
-                            if let Ok(metadata) = std::fs::metadata(&full_path) {
-                                #[cfg(target_family = "unix")]
-                                if metadata.is_file() && metadata.permissions().mode() & 0o111 != 0 {
-                                    suggestions.push(format!("{} ", name_str));
-                                }
-                                #[cfg(target_family = "windows")]
-                                if metadata.is_file() {
-                                    suggestions.push(format!("{} ", name_str));
-                                }
-                            }
-                        }
-                    }
+            // Skip if directory can't be read
+            let Ok(entries) = std::fs::read_dir(path_dir) else { continue; };
+            for entry in entries.flatten() {
+                // Skip if filename is not valid UTF-8
+                let file_name = entry.file_name();
+                let Some(name_str) = file_name.to_str() else { continue; };
+                // Skip if doesn't start with the word to complete
+                if !name_str.starts_with(word_to_complete) { continue; }
+                let full_path = path_dir.join(name_str);
+                // Skip if can't get metadata
+                let Ok(metadata) = std::fs::metadata(&full_path) else { continue; };
+                // Check if it's an executable file
+                let is_executable = if cfg!(target_family = "unix") {
+                    metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+                } else {
+                    metadata.is_file()
+                };
+                if is_executable {
+                    suggestions.push(format!("{} ", name_str));
                 }
             }
         }
@@ -311,6 +312,10 @@ impl MyHelper {
     }
 }
 
+// The Completer implementation for MyHelper is used by rustyline when the default completion
+// mechanism is triggered (e.g., when Cmd::Complete is returned from an event handler).
+// It provides completion candidates (suggestions) for the current input, and can also
+// implement custom completion logic such as completing to the longest common prefix.
 impl Completer for MyHelper {
     type Candidate = Pair;
 
@@ -340,14 +345,22 @@ struct TabState {
     last_pos: usize,
 }
 
+// MyTabHandler is a custom event handler for the Tab key.
+// It controls the interactive tab completion experience, including:
+// - Beeping on the first Tab press if there are multiple matches
+// - Printing all suggestions on the second Tab press
+// - Triggering completion (via Cmd::Complete) if there is only one match
+// This handler is registered with rustyline to override the default Tab behavior.
 struct MyTabHandler {
-    state: Arc<Mutex<TabState>>,
-    commands: Vec<String>,
-    path_dirs: Vec<std::path::PathBuf>,
+    state: Arc<Mutex<TabState>>, // Shared state across handler calls, protected by Mutex for thread safety.
+    commands: Vec<String>, // List of builtin commands for completion.
+    path_dirs: Vec<std::path::PathBuf>, // PATH directories to scan for executables.
 }
 
 impl MyTabHandler {
-     fn get_suggestions(&self, line: &str, pos: usize) -> Vec<String> {
+    // Gets suggestions for the current word at position in the line.
+    // Returns a list of matching commands and executables.
+    fn get_suggestions(&self, line: &str, pos: usize) -> Vec<String> {
         let (_, word_to_complete) = {
             let split_idx = line[..pos].rfind(' ').map(|i| i + 1).unwrap_or(0);
             (split_idx, &line[split_idx..pos])
@@ -388,37 +401,44 @@ impl MyTabHandler {
     }
 }
 
+// Implements ConditionalEventHandler to customize tab behavior.
+// If one match, complete it. If multiple, beep on first tab, list on second.
 impl ConditionalEventHandler for MyTabHandler {
     fn handle(&self, _event: &Event, _: RepeatCount, _: bool, ctx: &EventContext) -> Option<Cmd> {
         let current_line = ctx.line().to_string();
         let current_pos = ctx.pos();
         let matches = self.get_suggestions(&current_line, current_pos);
 
+        // If exactly one match, perform completion.
         if matches.len() == 1 {
             return Some(Cmd::Complete);
         }
 
         let mut state = self.state.lock().unwrap();
 
+        // Reset tab count if line or position changed.
         if current_line != state.last_line || current_pos != state.last_pos {
              state.consecutive_tabs = 0;
              state.last_line = current_line.clone();
              state.last_pos = current_pos;
         }
 
+        // If no matches, beep and do nothing.
         if matches.is_empty() {
-             print!("\x07");
+             print!("\x07"); // ASCII bell character for beep.
              std::io::stdout().flush().unwrap();
              return Some(Cmd::Noop);
         }
 
         state.consecutive_tabs += 1;
 
+        // On first consecutive tab, beep.
         if state.consecutive_tabs == 1 {
              print!("\x07");
              std::io::stdout().flush().unwrap();
              Some(Cmd::Noop)
         } else {
+             // On second, print suggestions and reprint prompt.
              print!("\n");
              let joined = matches.join("  ");
              print!("{}", joined);
@@ -454,12 +474,14 @@ fn main() -> Result<()> {
         path_dirs: path_dirs.clone(),
     };
 
+    // Shared state for tracking tab presses.
     let tab_state = Arc::new(Mutex::new(TabState {
         consecutive_tabs: 0,
         last_line: String::new(),
         last_pos: 0,
     }));
 
+    // Handler for tab events.
     let tab_handler = MyTabHandler {
         state: tab_state,
         commands: commands.clone(),
@@ -468,6 +490,7 @@ fn main() -> Result<()> {
 
     let mut rl = Editor::new()?;
     rl.set_helper(Some(helper));
+    // Bind Tab key to our custom handler for advanced completion behavior.
     rl.bind_sequence(KeyEvent(KeyCode::Tab, Modifiers::NONE), EventHandler::Conditional(Box::new(tab_handler)));
 
     loop {
