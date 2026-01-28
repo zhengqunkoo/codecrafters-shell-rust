@@ -416,4 +416,88 @@ mod tests {
         assert_eq!(start, 0);
         assert_eq!(matches, vec!["echo "]);
     }
+
+    #[test]
+    fn test_execute_builtin_pwd_redirect_stdout() {
+        let dir = std::env::temp_dir().join("shell_tests_pwd");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file_path = dir.join("pwd_out.txt");
+        let file_path_str = file_path.to_str().unwrap();
+
+        if file_path.exists() {
+            std::fs::remove_file(&file_path).unwrap();
+        }
+
+        execute_command("pwd", vec![], file_path_str, Some(RedirectTo::Stdout));
+
+        let content = std::fs::read_to_string(&file_path).unwrap();
+        let expected = std::env::current_dir().unwrap().to_string_lossy().to_string() + "\n";
+        assert_eq!(content, expected);
+    }
+
+    #[test]
+    fn test_execute_builtin_type_builtin() {
+        let dir = std::env::temp_dir().join("shell_tests_type");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file_path = dir.join("type_out.txt");
+        let file_path_str = file_path.to_str().unwrap();
+
+        if file_path.exists() {
+            std::fs::remove_file(&file_path).unwrap();
+        }
+
+        execute_command("type", vec!["echo".to_string()], file_path_str, Some(RedirectTo::Stdout));
+
+        let content = std::fs::read_to_string(&file_path).unwrap();
+        assert_eq!(content, "echo is a shell builtin\n");
+    }
+
+    #[test]
+    fn test_execute_builtin_type_not_found() {
+        let out_dir = std::env::temp_dir().join("shell_tests_type_not");
+        std::fs::create_dir_all(&out_dir).unwrap();
+        let out_file = out_dir.join("type_out.txt");
+        let out_file_str = out_file.to_str().unwrap();
+
+        if out_file.exists() {
+            std::fs::remove_file(&out_file).unwrap();
+        }
+
+        execute_command("type", vec!["nonexistent".to_string()], out_file_str, Some(RedirectTo::Stdout));
+
+        let content = std::fs::read_to_string(&out_file).unwrap();
+        assert_eq!(content, "nonexistent: not found\n");
+
+        std::fs::remove_dir_all(out_dir).unwrap();
+    }
+
+    #[test]
+    fn test_execute_builtin_cd_relative() {
+        let temp_base = std::env::temp_dir().join("test_cd_relative");
+        std::fs::create_dir_all(&temp_base).unwrap();
+        let sub_dir = temp_base.join("raspberry").join("orange");
+        std::fs::create_dir_all(&sub_dir).unwrap();
+
+        let original_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&temp_base).unwrap();
+
+        execute_command("cd", vec!["./raspberry/orange".to_string()], "", None);
+
+        let new_cwd = std::env::current_dir().unwrap();
+        assert_eq!(new_cwd, sub_dir);
+
+        // Restore
+        std::env::set_current_dir(&original_cwd).unwrap();
+        std::fs::remove_dir_all(&temp_base).unwrap();
+    }
+
+    #[test]
+    fn test_execute_builtin_cd_absolute_error() {
+        let original_cwd = std::env::current_dir().unwrap();
+
+        execute_command("cd", vec!["/non-existing-directory".to_string()], "", None);
+
+        let new_cwd = std::env::current_dir().unwrap();
+        assert_eq!(original_cwd, new_cwd); // Should not change on error
+    }
 }
