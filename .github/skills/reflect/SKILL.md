@@ -17,6 +17,8 @@ Use this skill when the user provides corrections (feedback) or when analyzing w
 - Interaction: Pause execution immediately upon "No!" or alarm signals.
 - Interaction: When correcting mistakes, explain the cause and proposed fix *before* executing it.
 - Interaction: Distinguish between generative (code) and additive (docs) tasks; verify file state before writing to docs.
+- Workflow: When implementing from remote specs, map interactive behaviors (e.g., "TAB press") to their underlying logic unit tests (e.g., "suggestion list generation") rather than function calling, as these are handled by `rustyline` library.
+- Context: Acknowledge that implementing interactive features often requires iterative prompting to resolve API/visibility issues (e.g., `pub` structs, trait imports) that aren't immediately obvious.
 
 ## Capability: Reflect (Learn from Corrections)
 
