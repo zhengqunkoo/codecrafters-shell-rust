@@ -1,8 +1,10 @@
 #[cfg(test)]
 mod tests {
     use crate::{find_executable_in_path, parse_args, parse_command, execute_command, RedirectTo, MyHelper};
-    use std::fs::File;
+    use std::fs::{self, File};
     use std::time::{SystemTime, UNIX_EPOCH};
+    #[cfg(target_family = "unix")]
+    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn test_completion_exact_match() {
@@ -10,7 +12,7 @@ mod tests {
             commands: vec!["echo".into(), "exit".into()],
             path_dirs: vec![],
         };
-        let (start, matches) = helper.get_suggestions("echo", 4);
+        let (start, matches) = helper.get_all_suggestions("echo", 4);
         assert_eq!(start, 0);
         assert_eq!(matches, vec!["echo "]);
     }
@@ -21,7 +23,7 @@ mod tests {
             commands: vec!["echo".into(), "exit".into()],
             path_dirs: vec![],
         };
-        let (start, matches) = helper.get_suggestions("ec", 2);
+        let (start, matches) = helper.get_all_suggestions("ec", 2);
         assert_eq!(start, 0);
         assert_eq!(matches, vec!["echo "]);
     }
@@ -32,7 +34,7 @@ mod tests {
             commands: vec!["echo".into(), "exit".into(), "echoloco".into()],
             path_dirs: vec![],
         };
-        let (start, matches) = helper.get_suggestions("ec", 2);
+        let (start, matches) = helper.get_all_suggestions("ec", 2);
         assert_eq!(start, 0);
         // "exit" should not match "ec"
         assert!(matches.contains(&"echo ".to_string()));
@@ -47,7 +49,7 @@ mod tests {
             commands: vec!["echo".into(), "exit".into()],
             path_dirs: vec![],
         };
-        let (start, matches) = helper.get_suggestions("foo", 3);
+        let (start, matches) = helper.get_all_suggestions("foo", 3);
         assert_eq!(start, 0);
         assert!(matches.is_empty());
     }
@@ -60,19 +62,19 @@ mod tests {
             path_dirs: vec![],
         };
         // "sudo ec" -> should suggest "echo"
-        let (start, matches) = helper.get_suggestions("sudo ec", 7);
+        let (start, matches) = helper.get_all_suggestions("sudo ec", 7);
         assert_eq!(start, 5); // "sudo " is 5 chars
         assert_eq!(matches, vec!["echo "]);
     }
 
     #[test]
     fn test_completion_executable_match() {
-        let (temp_dir, exec_path) = setup_executable("my_custom_exec");
+        let (temp_dir, _exec_path) = setup_executable("my_custom_exec");
         let helper = MyHelper {
             commands: vec!["echo".into()],
-            path_dirs: vec![temp_dir.clone()],
+            path_dirs: vec![temp_dir.as_path().to_path_buf()],
         };
-        let (start, matches) = helper.get_suggestions("my_c", 4);
+        let (start, matches) = helper.get_all_suggestions("my_c", 4);
         assert_eq!(start, 0);
         assert!(matches.contains(&"my_custom_exec ".to_string()));
         assert_eq!(matches.len(), 1); // Only one match expected
@@ -400,5 +402,18 @@ mod tests {
     fn test_parse_args_double_quotes() {
         let args = parse_args("echo \"hello world\"");
         assert_eq!(args, vec!["echo", "hello world"]);
+    }
+
+    #[test]
+    fn test_completion_ech_partial() {
+        let helper = MyHelper {
+            commands: vec!["echo".into()],
+            path_dirs: vec![],
+        };
+
+        // "ech" should complete to "echo " since it's a single match
+        let (start, matches) = helper.get_all_suggestions("ech", 3);
+        assert_eq!(start, 0);
+        assert_eq!(matches, vec!["echo "]);
     }
 }

@@ -40,6 +40,28 @@ pub fn find_executable_in_path(executable: &str, path_env_opt: Option<&str>) -> 
     None
 }
 
+pub fn find_longest_common_prefix(matches: &[String]) -> String {
+    if matches.is_empty() {
+        return String::new();
+    }
+    let mut prefix = matches[0].clone();
+    if std::env::var("DEBUG").is_ok() {
+        eprintln!("[DEBUG] Initial prefix: '{}'", prefix);
+    }
+    for m in &matches[1..] {
+        let mut i = 0;
+        let max = std::cmp::min(prefix.len(), m.len());
+        while i < max && prefix.as_bytes()[i] == m.as_bytes()[i] {
+            i += 1;
+        }
+        prefix.truncate(i);
+        if std::env::var("DEBUG").is_ok() {
+            eprintln!("[DEBUG] Truncated prefix after comparing with '{}': '{}'", m, prefix);
+        }
+    }
+    prefix
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum RedirectTo {
     Stdout,
@@ -259,7 +281,7 @@ pub struct MyHelper {
 }
 
 impl MyHelper {
-    pub fn get_suggestions(&self, line: &str, pos: usize) -> (usize, Vec<String>) {
+    pub fn get_all_suggestions(&self, line: &str, pos: usize) -> (usize, Vec<String>) {
         let (start, word_to_complete) = {
             let split_idx = line[..pos].rfind(' ').map(|i| i + 1).unwrap_or(0);
             (split_idx, &line[split_idx..pos])
@@ -269,7 +291,7 @@ impl MyHelper {
             .commands
             .iter()
             .filter(|cmd| cmd.starts_with(word_to_complete))
-            .map(|cmd| format!("{} ", cmd))
+            .map(|cmd| format!("{} ", cmd)) // Add trailing space here
             .collect();
 
         let mut executable_matches = self.get_executable_suggestions(word_to_complete);
@@ -281,6 +303,26 @@ impl MyHelper {
         (start, all_matches)
     }
 
+    /*
+    Spec: Completing to Longest Common Prefix
+    When multiple executables match the user's input, and some are prefixes of others, your shell should complete to the longest common prefix of all matches.
+
+    For example, if these executables exist in PATH:
+
+    xyz_foo
+    xyz_foo_bar
+    xyz_foo_bar_baz
+
+    Pressing tab completes to the next common prefix of the remaining matches:
+
+    # Note: The prompt lines below are displayed on the same line, and the user inserts '_' between each step.
+    $ xyz_<TAB>
+    $ xyz_foo_<TAB>
+    $ xyz_foo_bar_<TAB>
+    $ xyz_foo_bar_baz 
+
+    There are no executable suggestions printed when the only remaining executables share a common prefix.
+    */
     fn get_executable_suggestions(&self, word_to_complete: &str) -> Vec<String> {
         let mut suggestions = Vec::new();
         for path_dir in &self.path_dirs {
@@ -302,6 +344,7 @@ impl MyHelper {
                     metadata.is_file()
                 };
                 if is_executable {
+                    // Add trailing space to executable suggestions for consistency with builtins
                     suggestions.push(format!("{} ", name_str));
                 }
             }
@@ -325,16 +368,28 @@ impl Completer for MyHelper {
         pos: usize,
         _ctx: &Context<'_>,
     ) -> Result<(usize, Vec<Pair>)> {
-        let (start, matches) = self.get_suggestions(line, pos);
-
+        let (start, matches) = self.get_all_suggestions(line, pos);
+    
+        let word_to_complete = &line[start..pos];
+        let trimmed_matches: Vec<String> = matches.iter().map(|s| s.trim_end().to_string()).collect();
+        let common_prefix = find_longest_common_prefix(&trimmed_matches);
+        let add_space = matches.len() == 1 || common_prefix == word_to_complete;
+    
         let pairs = matches
             .into_iter()
-            .map(|cmd| Pair {
-                display: cmd.clone(),
-                replacement: cmd,
+            .map(|cmd| {
+                let replacement = if add_space {
+                    format!("{} ", cmd.trim_end())
+                } else {
+                    cmd.trim_end().to_string()
+                };
+                Pair {
+                    display: cmd.clone(),
+                    replacement,
+                }
             })
             .collect();
-
+        
         Ok((start, pairs))
     }
 }
@@ -432,11 +487,34 @@ impl ConditionalEventHandler for MyTabHandler {
 
         state.consecutive_tabs += 1;
 
-        // On first consecutive tab, beep.
+        // On first consecutive tab, complete user input to longer common prefix. If no longer common prefix found, beep.
         if state.consecutive_tabs == 1 {
-             print!("\x07");
-             std::io::stdout().flush().unwrap();
-             Some(Cmd::Noop)
+            if std::env::var("DEBUG").is_ok() {
+                eprintln!("[DEBUG] current_line: '{}', current_pos: {}", current_line, current_pos);
+                eprintln!("[DEBUG] matches: {:?}", matches);
+            }
+
+            // Sub-spec: "All matches share a common prefix that's longer than the user's input.
+            // Complete user's input to longest common prefix."
+            let prefix = find_longest_common_prefix(&matches);
+            if std::env::var("DEBUG").is_ok() {
+                eprintln!("[DEBUG] Computed prefix: '{}'", prefix);
+            }
+            // Find the start of the word being completed
+            let start = current_line[..current_pos].rfind(' ').map(|i| i + 1).unwrap_or(0);
+            let word_len = current_pos - start;
+            if prefix.len() > word_len {
+                // Use rustyline's completer to handle buffer update and cursor positioning
+                state.consecutive_tabs = 0;
+                state.last_line = current_line.clone(); // Will be updated by completer
+                state.last_pos = current_pos; // Will be updated by completer
+                return Some(Cmd::Complete);
+            } else {
+                // If no longer common prefix found, beep.
+                print!("\x07");
+                std::io::stdout().flush().unwrap();
+                Some(Cmd::Noop)
+            }
         } else {
              // On second, print suggestions and reprint prompt.
              print!("\n");
