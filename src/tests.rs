@@ -1,10 +1,8 @@
 #[cfg(test)]
 mod tests {
-    use crate::{Shell, RedirectMode, MyHelper, CommandLine, Argument};
+    use crate::{Shell, MyHelper, CommandLine, Argument};
     use std::fs::File;
     use std::time::{SystemTime, UNIX_EPOCH};
-    #[cfg(target_family = "unix")]
-    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn test_completion_exact_match() {
@@ -153,8 +151,9 @@ mod tests {
         let cmd_line = CommandLine::parse("echo hello > output.txt");
         assert_eq!(cmd_line.command, "echo");
         assert_eq!(cmd_line.args, vec![Argument::new("hello")]);
-        assert_eq!(cmd_line.redirection.clone().unwrap().target, "output.txt");
-        assert_eq!(cmd_line.redirection.unwrap().mode, RedirectMode::Stdout);
+        let r = cmd_line.redirection.as_ref().unwrap();
+        assert_eq!(r.target(), "output.txt");
+        assert_eq!(r.mode_name(), "1>");
     }
     
     #[test]
@@ -162,8 +161,9 @@ mod tests {
         let cmd_line = CommandLine::parse("cat file 1> out");
         assert_eq!(cmd_line.command, "cat");
         assert_eq!(cmd_line.args, vec![Argument::new("file")]);
-        assert_eq!(cmd_line.redirection.clone().unwrap().target, "out");
-        assert_eq!(cmd_line.redirection.unwrap().mode, RedirectMode::Stdout);
+        let r = cmd_line.redirection.as_ref().unwrap();
+        assert_eq!(r.target(), "out");
+        assert_eq!(r.mode_name(), "1>");
     }
 
     #[test]
@@ -171,8 +171,9 @@ mod tests {
         let cmd_line = CommandLine::parse("ls > 'my file'");
         assert_eq!(cmd_line.command, "ls");
         assert!(cmd_line.args.is_empty());
-        assert_eq!(cmd_line.redirection.clone().unwrap().target, "my file");
-        assert_eq!(cmd_line.redirection.unwrap().mode, RedirectMode::Stdout);
+        let r = cmd_line.redirection.as_ref().unwrap();
+        assert_eq!(r.target(), "my file");
+        assert_eq!(r.mode_name(), "1>");
     }
 
     #[test]
@@ -180,8 +181,9 @@ mod tests {
         let cmd_line = CommandLine::parse("ls 2> error.log");
         assert_eq!(cmd_line.command, "ls");
         assert!(cmd_line.args.is_empty());
-        assert_eq!(cmd_line.redirection.clone().unwrap().target, "error.log");
-        assert_eq!(cmd_line.redirection.unwrap().mode, RedirectMode::Stderr);
+        let r = cmd_line.redirection.as_ref().unwrap();
+        assert_eq!(r.target(), "error.log");
+        assert_eq!(r.mode_name(), "2>");
     }
 
     #[test]
@@ -189,8 +191,9 @@ mod tests {
         let cmd_line = CommandLine::parse("grep foo bar 2> error.log");
         assert_eq!(cmd_line.command, "grep");
         assert_eq!(cmd_line.args, vec![Argument::new("foo"), Argument::new("bar")]);
-        assert_eq!(cmd_line.redirection.clone().unwrap().target, "error.log");
-        assert_eq!(cmd_line.redirection.unwrap().mode, RedirectMode::Stderr);
+        let r = cmd_line.redirection.as_ref().unwrap();
+        assert_eq!(r.target(), "error.log");
+        assert_eq!(r.mode_name(), "2>");
     }
 
     #[test]
@@ -198,8 +201,9 @@ mod tests {
         let cmd_line = CommandLine::parse("ls >> out");
         assert_eq!(cmd_line.command, "ls");
         assert!(cmd_line.args.is_empty());
-        assert_eq!(cmd_line.redirection.clone().unwrap().target, "out");
-        assert_eq!(cmd_line.redirection.unwrap().mode, RedirectMode::StdoutAppend);
+        let r = cmd_line.redirection.as_ref().unwrap();
+        assert_eq!(r.target(), "out");
+        assert_eq!(r.mode_name(), "1>>");
     }
 
     #[test]
@@ -207,8 +211,9 @@ mod tests {
         let cmd_line = CommandLine::parse("ls 1>> out");
         assert_eq!(cmd_line.command, "ls");
         assert!(cmd_line.args.is_empty());
-        assert_eq!(cmd_line.redirection.clone().unwrap().target, "out");
-        assert_eq!(cmd_line.redirection.unwrap().mode, RedirectMode::StdoutAppend);
+        let r = cmd_line.redirection.as_ref().unwrap();
+        assert_eq!(r.target(), "out");
+        assert_eq!(r.mode_name(), "1>>");
     }
 
     #[test]
@@ -216,8 +221,9 @@ mod tests {
         let cmd_line = CommandLine::parse("ls 2>> out");
         assert_eq!(cmd_line.command, "ls");
         assert!(cmd_line.args.is_empty());
-        assert_eq!(cmd_line.redirection.clone().unwrap().target, "out");
-        assert_eq!(cmd_line.redirection.unwrap().mode, RedirectMode::StderrAppend);
+        let r = cmd_line.redirection.as_ref().unwrap();
+        assert_eq!(r.target(), "out");
+        assert_eq!(r.mode_name(), "2>>");
     }
 
     // Helper to create a temp dir with an executable file
@@ -280,10 +286,9 @@ mod tests {
         let cmd = CommandLine {
             command: "echo".to_string(),
             args: vec![Argument::new("hello")],
-            redirection: Some(crate::Redirection { 
-                target: file_path_str.to_string(), 
-                mode: RedirectMode::Stdout 
-            }),
+            redirection: Some(Box::new(crate::StdoutRedirect { 
+                target: file_path_str.to_string() 
+            })),
         };
         shell.execute(cmd);
 
@@ -306,14 +311,14 @@ mod tests {
         let cmd1 = CommandLine {
             command: "echo".to_string(),
             args: vec![Argument::new("hello")],
-            redirection: Some(crate::Redirection { target: file_path_str.to_string(), mode: RedirectMode::Stdout }),
+            redirection: Some(Box::new(crate::StdoutRedirect { target: file_path_str.to_string() })),
         };
         shell.execute(cmd1);
 
         let cmd2 = CommandLine {
             command: "echo".to_string(),
             args: vec![Argument::new("world")],
-            redirection: Some(crate::Redirection { target: file_path_str.to_string(), mode: RedirectMode::StdoutAppend }),
+            redirection: Some(Box::new(crate::StdoutAppendRedirect { target: file_path_str.to_string() })),
         };
         shell.execute(cmd2);
 
@@ -336,7 +341,7 @@ mod tests {
          let cmd = CommandLine {
              command: "sh".to_string(),
              args: vec![Argument::new("-c"), Argument::new("echo external")],
-             redirection: Some(crate::Redirection { target: file_path_str.to_string(), mode: RedirectMode::Stdout }),
+             redirection: Some(Box::new(crate::StdoutRedirect { target: file_path_str.to_string() })),
          };
          shell.execute(cmd);
          
@@ -359,7 +364,7 @@ mod tests {
          let cmd = CommandLine {
              command: "sh".to_string(),
              args: vec![Argument::new("-c"), Argument::new("echo failure >&2")],
-             redirection: Some(crate::Redirection { target: file_path_str.to_string(), mode: RedirectMode::Stderr }),
+             redirection: Some(Box::new(crate::StderrRedirect { target: file_path_str.to_string() })),
          };
          shell.execute(cmd);
          
@@ -388,7 +393,7 @@ mod tests {
          let cmd = CommandLine {
              command: "ls".to_string(),
              args: vec![Argument::new("-1"), Argument::new(rat_dir_str)],
-             redirection: Some(crate::Redirection { target: bee_md_str.to_string(), mode: RedirectMode::StdoutAppend }),
+             redirection: Some(Box::new(crate::StdoutAppendRedirect { target: bee_md_str.to_string() })),
          };
          shell.execute(cmd);
          
@@ -405,7 +410,7 @@ mod tests {
          let cmd2 = CommandLine {
              command: "echo".to_string(),
              args: vec![Argument::new("Hello Maria")],
-             redirection: Some(crate::Redirection { target: fox_md_str.to_string(), mode: RedirectMode::StdoutAppend }),
+             redirection: Some(Box::new(crate::StdoutAppendRedirect { target: fox_md_str.to_string() })),
          };
          shell.execute(cmd2);
          
@@ -428,7 +433,7 @@ mod tests {
         let cmd = CommandLine {
             command: "pwd".to_string(),
             args: vec![],
-            redirection: Some(crate::Redirection { target: file_path_str.to_string(), mode: RedirectMode::Stdout }),
+            redirection: Some(Box::new(crate::StdoutRedirect { target: file_path_str.to_string() })),
         };
         shell.execute(cmd);
 
@@ -452,7 +457,7 @@ mod tests {
         let cmd = CommandLine {
              command: "type".to_string(),
              args: vec![Argument::new("echo")],
-             redirection: Some(crate::Redirection { target: file_path_str.to_string(), mode: RedirectMode::Stdout }),
+             redirection: Some(Box::new(crate::StdoutRedirect { target: file_path_str.to_string() })),
         };
         shell.execute(cmd);
 
@@ -475,7 +480,7 @@ mod tests {
         let cmd = CommandLine {
              command: "type".to_string(),
              args: vec![Argument::new("nonexistent")],
-             redirection: Some(crate::Redirection { target: out_file_str.to_string(), mode: RedirectMode::Stdout }),
+             redirection: Some(Box::new(crate::StdoutRedirect { target: out_file_str.to_string() })),
         };
         shell.execute(cmd);
 

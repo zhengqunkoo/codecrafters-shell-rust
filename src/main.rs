@@ -9,6 +9,7 @@ use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
+use std::fs::{File, OpenOptions};
 
 use rustyline::completion::{Completer, Pair};
 use rustyline::error::ReadlineError;
@@ -28,25 +29,118 @@ impl Argument {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum RedirectMode {
-    Stdout,
-    Stderr,
-    StdoutAppend,
-    StderrAppend,
+// Redirection Objects
+
+pub trait Redirection: std::fmt::Debug {
+    fn target(&self) -> &str;
+    fn mode_name(&self) -> &str; // e.g. "1>", "2>>"
+    fn apply(&self, cmd: &mut std::process::Command) -> std::io::Result<()>;
+    fn print(&self, stdout: &str, stderr: &str) -> std::io::Result<()>;
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct Redirection {
+#[derive(Debug)]
+pub struct StdoutRedirect {
     pub target: String,
-    pub mode: RedirectMode,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+impl StdoutRedirect {
+    pub const OPERATOR: &'static str = "1>";
+    pub const DEFAULT_OPERATOR: &'static str = ">";
+}
+
+impl Redirection for StdoutRedirect {
+    fn target(&self) -> &str { &self.target }
+    fn mode_name(&self) -> &str { Self::OPERATOR }
+    fn apply(&self, cmd: &mut std::process::Command) -> std::io::Result<()> {
+        let file = File::create(&self.target)?;
+        cmd.stdout(file);
+        Ok(())
+    }
+    fn print(&self, stdout: &str, stderr: &str) -> std::io::Result<()> {
+        let mut file = File::create(&self.target)?;
+        eprint!("{}", stderr);
+        write!(file, "{}", stdout)
+    }
+}
+
+#[derive(Debug)]
+pub struct StderrRedirect {
+    pub target: String,
+}
+
+impl StderrRedirect {
+    pub const OPERATOR: &'static str = "2>";
+}
+
+impl Redirection for StderrRedirect {
+    fn target(&self) -> &str { &self.target }
+    fn mode_name(&self) -> &str { Self::OPERATOR }
+    fn apply(&self, cmd: &mut std::process::Command) -> std::io::Result<()> {
+        let file = File::create(&self.target)?;
+        cmd.stderr(file);
+        Ok(())
+    }
+    fn print(&self, stdout: &str, stderr: &str) -> std::io::Result<()> {
+        let mut file = File::create(&self.target)?;
+        print!("{}", stdout);
+        write!(file, "{}", stderr)
+    }
+}
+
+#[derive(Debug)]
+pub struct StdoutAppendRedirect {
+    pub target: String,
+}
+
+impl StdoutAppendRedirect {
+    pub const OPERATOR: &'static str = "1>>";
+    pub const DEFAULT_OPERATOR: &'static str = ">>";
+}
+
+impl Redirection for StdoutAppendRedirect {
+    fn target(&self) -> &str { &self.target }
+    fn mode_name(&self) -> &str { Self::OPERATOR }
+    fn apply(&self, cmd: &mut std::process::Command) -> std::io::Result<()> {
+        let file = OpenOptions::new().create(true).write(true).append(true).open(&self.target)?;
+        cmd.stdout(file);
+        Ok(())
+    }
+    fn print(&self, stdout: &str, stderr: &str) -> std::io::Result<()> {
+        let mut file = OpenOptions::new().create(true).write(true).append(true).open(&self.target)?;
+        eprint!("{}", stderr);
+        write!(file, "{}", stdout)
+    }
+}
+
+#[derive(Debug)]
+pub struct StderrAppendRedirect {
+    pub target: String,
+}
+
+impl StderrAppendRedirect {
+    pub const OPERATOR: &'static str = "2>>";
+}
+
+impl Redirection for StderrAppendRedirect {
+    fn target(&self) -> &str { &self.target }
+    fn mode_name(&self) -> &str { Self::OPERATOR }
+    fn apply(&self, cmd: &mut std::process::Command) -> std::io::Result<()> {
+        let file = OpenOptions::new().create(true).write(true).append(true).open(&self.target)?;
+        cmd.stderr(file);
+        Ok(())
+    }
+    fn print(&self, stdout: &str, stderr: &str) -> std::io::Result<()> {
+        let mut file = OpenOptions::new().create(true).write(true).append(true).open(&self.target)?;
+        print!("{}", stdout);
+        write!(file, "{}", stderr)
+    }
+}
+
+#[derive(Debug)]
 pub struct CommandLine {
     pub command: String,
     pub args: Vec<Argument>,
-    pub redirection: Option<Redirection>,
+    pub redirection: Option<Box<dyn Redirection>>,
 }
 
 impl CommandLine {
@@ -54,34 +148,26 @@ impl CommandLine {
         let input = input.trim();
         let (command, rest) = input.split_once(' ').unwrap_or((input, ""));
 
-        let (parsing_args_str, filename, mode) = 
-            if let Some((a, f)) = rest.split_once("1>>") {
-                (a, Some(f), Some(RedirectMode::StdoutAppend))
-            } else if let Some((a, f)) = rest.split_once("2>>") {
-                (a, Some(f), Some(RedirectMode::StderrAppend))
-            } else if let Some((a, f)) = rest.split_once(">>") {
-                (a, Some(f), Some(RedirectMode::StdoutAppend))
-            } else if let Some((a, f)) = rest.split_once("1>") {
-                (a, Some(f), Some(RedirectMode::Stdout))
-            } else if let Some((a, f)) = rest.split_once("2>") {
-                (a, Some(f), Some(RedirectMode::Stderr))
-            } else if let Some((a, f)) = rest.split_once('>') {
-                (a, Some(f), Some(RedirectMode::Stdout))
-            } else {
-                (rest, None, None)
-            };
+        let handlers: [(&str, fn(String) -> Box<dyn Redirection>); 6] = [
+            (StdoutAppendRedirect::OPERATOR, |t| Box::new(StdoutAppendRedirect { target: t })),
+            (StderrAppendRedirect::OPERATOR, |t| Box::new(StderrAppendRedirect { target: t })),
+            (StdoutAppendRedirect::DEFAULT_OPERATOR, |t| Box::new(StdoutAppendRedirect { target: t })),
+            (StdoutRedirect::OPERATOR, |t| Box::new(StdoutRedirect { target: t })),
+            (StderrRedirect::OPERATOR, |t| Box::new(StderrRedirect { target: t })),
+            (StdoutRedirect::DEFAULT_OPERATOR, |t| Box::new(StdoutRedirect { target: t })),
+        ];
+
+        let (parsing_args_str, redirection) = handlers.into_iter()
+            .find_map(|(op, constructor)| {
+                rest.split_once(op).map(|(a, f)| {
+                    let target = f.trim().trim_matches(|c| c == '\'' || c == '"').to_string();
+                    (a, Some(constructor(target)))
+                })
+            })
+            .unwrap_or((rest, None));
 
         let args = Self::parse_args_string(parsing_args_str);
         
-        let redirection = if let (Some(f), Some(m)) = (filename, mode) {
-             Some(Redirection {
-                 target: f.trim().trim_matches(|c| c == '\'' || c == '"').to_string(),
-                 mode: m,
-             })
-        } else {
-            None
-        };
-
         CommandLine {
             command: command.to_string(),
             args,
@@ -140,13 +226,13 @@ impl CommandLine {
 
 pub trait Command {
     fn name(&self) -> &str;
-    fn execute(&self, args: &[Argument], redirection: Option<&Redirection>, shell: &Shell) -> bool;
+    fn execute(&self, args: &[Argument], redirection: Option<&dyn Redirection>, shell: &Shell) -> bool;
 }
 
 pub struct ExitCommand;
 impl Command for ExitCommand {
     fn name(&self) -> &str { "exit" }
-    fn execute(&self, _args: &[Argument], _redirection: Option<&Redirection>, _shell: &Shell) -> bool {
+    fn execute(&self, _args: &[Argument], _redirection: Option<&dyn Redirection>, _shell: &Shell) -> bool {
         false
     }
 }
@@ -154,7 +240,7 @@ impl Command for ExitCommand {
 pub struct EchoCommand;
 impl Command for EchoCommand {
     fn name(&self) -> &str { "echo" }
-    fn execute(&self, args: &[Argument], redirection: Option<&Redirection>, _shell: &Shell) -> bool {
+    fn execute(&self, args: &[Argument], redirection: Option<&dyn Redirection>, _shell: &Shell) -> bool {
         let output = args.iter().map(|a| a.value.as_str()).collect::<Vec<&str>>().join(" ") + "\n";
         CommandOutput::write(&output, "", redirection);
         true
@@ -164,7 +250,7 @@ impl Command for EchoCommand {
 pub struct TypeCommand;
 impl Command for TypeCommand {
     fn name(&self) -> &str { "type" }
-    fn execute(&self, args: &[Argument], redirection: Option<&Redirection>, shell: &Shell) -> bool {
+    fn execute(&self, args: &[Argument], redirection: Option<&dyn Redirection>, shell: &Shell) -> bool {
         let mut stdout = String::new();
         for arg in args {
             let name = &arg.value;
@@ -184,7 +270,7 @@ impl Command for TypeCommand {
 pub struct PwdCommand;
 impl Command for PwdCommand {
     fn name(&self) -> &str { "pwd" }
-    fn execute(&self, _args: &[Argument], redirection: Option<&Redirection>, _shell: &Shell) -> bool {
+    fn execute(&self, _args: &[Argument], redirection: Option<&dyn Redirection>, _shell: &Shell) -> bool {
         match env::current_dir() {
             Ok(path) => CommandOutput::write(&(path.display().to_string() + "\n"), "", redirection),
             Err(e) => CommandOutput::write("", &format!("pwd: error retrieving current directory: {}\n", e), redirection),
@@ -196,7 +282,7 @@ impl Command for PwdCommand {
 pub struct CdCommand;
 impl Command for CdCommand {
     fn name(&self) -> &str { "cd" }
-    fn execute(&self, args: &[Argument], _redirection: Option<&Redirection>, _shell: &Shell) -> bool {
+    fn execute(&self, args: &[Argument], _redirection: Option<&dyn Redirection>, _shell: &Shell) -> bool {
         if args.len() > 1 {
             eprint!("cd: too many arguments\n");
         } else {
@@ -219,31 +305,16 @@ pub struct ExternalCommand {
 
 impl Command for ExternalCommand {
     fn name(&self) -> &str { &self.name }
-    fn execute(&self, args: &[Argument], redirection: Option<&Redirection>, shell: &Shell) -> bool {
+    fn execute(&self, args: &[Argument], redirection: Option<&dyn Redirection>, shell: &Shell) -> bool {
         if let Some(full_path) = shell.find_executable_in_path(&self.name) {
             let executable = full_path.file_name().unwrap();
             let mut cmd = std::process::Command::new(executable);
             cmd.args(args.iter().map(|a| &a.value));
 
             if let Some(r) = redirection {
-                let mut fs_open_options = std::fs::OpenOptions::new();
-                fs_open_options.create(true).write(true);
-                match r.mode {
-                    RedirectMode::Stdout | RedirectMode::Stderr => { fs_open_options.truncate(true); }
-                    RedirectMode::StdoutAppend | RedirectMode::StderrAppend => { fs_open_options.append(true); }
-                }
-
-                match fs_open_options.open(&r.target) {
-                    Ok(file) => {
-                        match r.mode {
-                            RedirectMode::Stdout | RedirectMode::StdoutAppend => { cmd.stdout(file); }
-                            RedirectMode::Stderr | RedirectMode::StderrAppend => { cmd.stderr(file); }
-                        }
-                    }
-                    Err(_) => {
-                        println!("{}: cannot open file for output redirection", r.target);
-                        return true;
-                    }
+                if let Err(_) = r.apply(&mut cmd) {
+                    println!("{}: cannot open file for output redirection", r.target());
+                    return true;
                 }
             }
 
@@ -261,33 +332,11 @@ impl Command for ExternalCommand {
 // Helper for output handling
 struct CommandOutput;
 impl CommandOutput {
-    fn write(stdout: &str, stderr: &str, redirection: Option<&Redirection>) {
+    fn write(stdout: &str, stderr: &str, redirection: Option<&dyn Redirection>) {
         if let Some(r) = redirection {
-             let mut options = std::fs::OpenOptions::new();
-             options.create(true).write(true);
-             match r.mode {
-                 RedirectMode::Stdout | RedirectMode::Stderr => { options.truncate(true); }
-                 RedirectMode::StdoutAppend | RedirectMode::StderrAppend => { options.append(true); }
-             }
-
-             match r.mode {
-                 RedirectMode::Stdout | RedirectMode::StdoutAppend => {
-                     eprint!("{}", stderr);
-                     if let Ok(mut f) = options.open(&r.target) {
-                         let _ = write!(f, "{}", stdout);
-                     } else {
-                         println!("{}: cannot open file for output redirection", r.target);
-                     }
-                 }
-                 RedirectMode::Stderr | RedirectMode::StderrAppend => {
-                     print!("{}", stdout);
-                      if let Ok(mut f) = options.open(&r.target) {
-                         let _ = write!(f, "{}", stderr);
-                     } else {
-                         println!("{}: cannot open file for output redirection", r.target);
-                     }
-                 }
-             }
+            if let Err(_) = r.print(stdout, stderr) {
+                println!("{}: cannot open file for output redirection", r.target());
+            }
         } else {
             print!("{}", stdout);
             eprint!("{}", stderr);
@@ -355,11 +404,11 @@ impl Shell {
         if cmd_line.command.is_empty() { return true; }
         
         if let Some(cmd) = self.builtins.iter().find(|c| c.name() == cmd_line.command) {
-            return cmd.execute(&cmd_line.args, cmd_line.redirection.as_ref(), self);
+            return cmd.execute(&cmd_line.args, cmd_line.redirection.as_deref(), self);
         }
         
         let ext_cmd = ExternalCommand { name: cmd_line.command.clone() };
-        ext_cmd.execute(&cmd_line.args, cmd_line.redirection.as_ref(), self)
+        ext_cmd.execute(&cmd_line.args, cmd_line.redirection.as_deref(), self)
     }
 
     pub fn run(&mut self) -> Result<()> {
